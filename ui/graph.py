@@ -85,8 +85,26 @@ def _nid_from_slot(slot_id) -> int | None:
 _CHAINABLE_TYPES = {"Multiplicity", "Selection"}
 
 
+def _normalize_slot(slot_id):
+    """Normalize a slot identifier to its integer alias id.
+
+    The node editor's link callback may hand back either the string tag
+    or the integer alias id for an attribute depending on how the link
+    was created. Connections must be stored under one consistent type or
+    later membership checks (which always compare integer ids) silently
+    fail and every node looks disconnected.
+    """
+    if isinstance(slot_id, str):
+        try:
+            return dpg.get_alias_id(slot_id)
+        except Exception:
+            return slot_id
+    return slot_id
+
+
 def link_callback(sender, app_data):
-    start_slot, end_slot = app_data[0], app_data[1]
+    start_slot = _normalize_slot(app_data[0])
+    end_slot   = _normalize_slot(app_data[1])
     start_nid = _nid_from_slot(start_slot)
     end_nid   = _nid_from_slot(end_slot)
     if start_nid is not None and end_nid is not None:

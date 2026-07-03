@@ -1,9 +1,6 @@
 import os
 import sys
 import shutil
-import numpy as np
-import dearpygui.dearpygui as dpg
-from PIL import Image
 
 # Ensure the parent of fce_studio/ is on sys.path so the package is importable
 # whether fce.py is run directly or via the installed `fce` entry point.
@@ -11,10 +8,19 @@ _pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _pkg_parent not in sys.path:
     sys.path.insert(0, _pkg_parent)
 
+# Must run before dearpygui is imported: it redirects XDG_CACHE_HOME away
+# from unwritable locations before Mesa creates its GL context and tries
+# to set up a shader cache there.
+from paths import get_fce_home, configure_cache_env
+configure_cache_env()
+
+import numpy as np
+import dearpygui.dearpygui as dpg
+from PIL import Image
+
 from ui.graph import link_callback, delink_callback, create_node, setup_link_handlers
 from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload
 from fce_studio import __version__
-from paths import get_fce_home
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
