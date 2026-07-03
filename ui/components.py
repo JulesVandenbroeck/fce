@@ -5,11 +5,12 @@ from ui.graph import (compile_graph_topology, check_pipeline_connectivity,
                       mark_nodes_from_pipeline_check, validate_node_expressions,
                       clear_all_node_errors)
 from ui.state import get_run_state, update_run_state
+from paths import get_fce_home
 
 safe_get_state = get_run_state
 safe_set_state = update_run_state
 
-FCE_DIR = os.path.join(os.path.expanduser("~"), ".fce")
+FCE_DIR = get_fce_home()
 CURRENT_WORKER = None
 
 

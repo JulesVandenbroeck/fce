@@ -5,7 +5,9 @@ import contextlib
 import numpy as np
 import uproot
 
-hdir = os.path.expanduser("~") + "/.fce"
+from paths import get_fce_home
+
+hdir = get_fce_home()
 
 
 def run_fit(cfg, samples, en):

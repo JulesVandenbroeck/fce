@@ -10,7 +10,9 @@ from engine.path_filter import (filter_raw_event_data, fill_histogram_from_cache
                                   make_cache_acc, save_cache)
 from engine.path_final import write_final_histograms
 
-hdir = os.path.expanduser("~") + "/.fce"
+from paths import get_fce_home
+
+hdir = get_fce_home()
 
 
 class hist:

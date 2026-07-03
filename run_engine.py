@@ -10,7 +10,9 @@ from engine.analytical_loop import run_physics_loop
 from engine.downloader import run_dataset_download
 from engine.plotter import render_plots
 
-hdir = os.path.join(os.path.expanduser("~"), ".fce")
+from paths import get_fce_home
+
+hdir = get_fce_home()
 
 
 def execute_analysis(cfg, _unused):

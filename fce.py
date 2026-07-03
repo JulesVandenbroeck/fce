@@ -14,16 +14,24 @@ if _pkg_parent not in sys.path:
 from ui.graph import link_callback, delink_callback, create_node, setup_link_handlers
 from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload
 from fce_studio import __version__
+from paths import get_fce_home
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ── Clear caches from previous sessions ───────────────────────────────────────
-_FCE_DIR = os.path.join(os.path.expanduser("~"), ".fce")
-for _cache_subdir in ("cache", "output"):
-    _d = os.path.join(_FCE_DIR, _cache_subdir)
-    if os.path.exists(_d):
-        shutil.rmtree(_d)
-    os.makedirs(_d, exist_ok=True)
+# Best-effort: a stale/unwritable cache must never block startup.
+try:
+    _FCE_DIR = get_fce_home()
+    for _cache_subdir in ("cache", "output"):
+        _d = os.path.join(_FCE_DIR, _cache_subdir)
+        try:
+            if os.path.exists(_d):
+                shutil.rmtree(_d)
+            os.makedirs(_d, exist_ok=True)
+        except OSError:
+            pass
+except OSError:
+    pass
 
 dpg.create_context()
 

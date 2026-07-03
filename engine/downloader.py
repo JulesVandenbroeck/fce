@@ -1,6 +1,7 @@
 import os
 import subprocess
 
+from paths import get_fce_home
 
 _BASE_URL = "https://homepage.iihe.ac.be/~kskovpen/fce/datasets/"
 
@@ -12,7 +13,7 @@ def run_dataset_download(detector=None, energy_gev=None, force=False):
     energy_gev: "91" | "160" | "240" | "365" | None (all energies)
     force:      re-download even if files already exist
     """
-    target_dir = os.path.join(os.path.expanduser("~"), ".fce", "datasets")
+    target_dir = os.path.join(get_fce_home(), "datasets")
     os.makedirs(target_dir, exist_ok=True)
 
     inventory_path = os.path.join(target_dir, "files.txt")

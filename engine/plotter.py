@@ -6,7 +6,9 @@ import matplotlib.pyplot as plt
 import mplhep as hep
 import uproot
 
-hdir = os.path.expanduser("~") + "/.fce"
+from paths import get_fce_home
+
+hdir = get_fce_home()
 plt.style.use(hep.style.ROOT)
 
 
