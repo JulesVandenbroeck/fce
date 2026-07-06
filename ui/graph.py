@@ -1,6 +1,4 @@
 import re
-import json
-import os
 import dearpygui.dearpygui as dpg
 from ui.state import REGISTRY, NODE_HIERARCHY, NODE_LABELS
 

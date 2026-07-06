@@ -7,7 +7,7 @@ safe_get_state = get_run_state
 safe_set_state = update_run_state
 
 from engine.analytical_loop import run_physics_loop
-from engine.downloader import run_dataset_download
+from engine.downloader import run_dataset_download  # noqa: F401 (re-exported)
 from engine.plotter import render_plots
 
 from paths import get_fce_home
