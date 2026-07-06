@@ -247,8 +247,8 @@ def validate_node_expressions() -> list[tuple[int, str]]:
 
 
 def mark_nodes_from_pipeline_check(error_nids: list[int], all_nids: list[int]):
-    connected_starts = set(REGISTRY.connections.keys())
-    connected_ends   = set(REGISTRY.connections.values())
+    connected_starts = {s for s, _ in REGISTRY.links.values()}
+    connected_ends   = {e for _, e in REGISTRY.links.values()}
     for nid in all_nids:
         if nid in error_nids:
             ntype = REGISTRY.nodes.get(nid, "")
@@ -546,13 +546,14 @@ def create_node(node_type: str, pos: list | None = None):
 # ---------------------------------------------------------------------------
 
 def compile_graph_topology() -> dict:
+    import hashlib
+
     nodes = REGISTRY.nodes
 
-    ds_nids   = [n for n, t in nodes.items() if t == "DataSource"]
-    mul_nids  = [n for n, t in nodes.items() if t == "Multiplicity"]
-    sel_nids  = [n for n, t in nodes.items() if t == "Selection"]
-    obs_nids  = [n for n, t in nodes.items() if t == "Observable"]
-    hist_nids = [n for n, t in nodes.items() if t == "Histogram"]
+    ds_nids  = [n for n, t in nodes.items() if t == "DataSource"]
+    mul_nids = [n for n, t in nodes.items() if t == "Multiplicity"]
+    sel_nids = [n for n, t in nodes.items() if t == "Selection"]
+    obs_nids = [n for n, t in nodes.items() if t == "Observable"]
 
     ds = ds_nids[0] if ds_nids else None
     energy   = dpg.get_value(f"cb_energy_{ds}")   if ds is not None else "91 GeV"
@@ -572,31 +573,60 @@ def compile_graph_topology() -> dict:
         if dpg.does_item_exist(f"txt_sel_{n}") and dpg.get_value(f"txt_sel_{n}").strip()
     ]
 
-    obs  = obs_nids[0]  if obs_nids  else None
-    hist = hist_nids[0] if hist_nids else None
-
-    observable = dpg.get_value(f"txt_obs_{obs}").strip() if obs is not None else "met.pt"
-    target     = dpg.get_value(f"cb_target_{hist}")          if hist is not None else "None"
-    bins       = str(dpg.get_value(f"txt_bins_{hist}"))      if hist is not None else "40"
-    rng_min    = str(dpg.get_value(f"txt_range_min_{hist}")) if hist is not None else "0.0"
-    rng_max    = str(dpg.get_value(f"txt_range_max_{hist}")) if hist is not None else "150.0"
-
-    import hashlib
-    # selection-level hash: changes only when data source or cuts change
     h5_sel = hashlib.md5(
         (energy + detector + str(mult_cuts) + str(sel_exprs)).encode()
     ).hexdigest()
-    # full hash: changes when anything (including observable / bins) changes
-    h5 = hashlib.md5(
-        (h5_sel + observable + bins + rng_min + rng_max + target).encode()
-    ).hexdigest()
+
+    # Build Observable -> Histogram pairs by following graph links
+    obs_hist_pairs = []
+    for _, (start_slot, end_slot) in REGISTRY.links.items():
+        s_nid = REGISTRY.slot_node.get(start_slot)
+        e_nid = REGISTRY.slot_node.get(end_slot)
+        if (s_nid is not None and e_nid is not None
+                and nodes.get(s_nid) == "Observable"
+                and nodes.get(e_nid) == "Histogram"):
+            obs_hist_pairs.append((s_nid, e_nid))
+
+    # Fallback: first obs + first hist (covers single-node case before linking)
+    if not obs_hist_pairs:
+        obs_nid  = obs_nids[0]  if obs_nids  else None
+        hist_nid = next((n for n, t in nodes.items() if t == "Histogram"), None)
+        if obs_nid is not None and hist_nid is not None:
+            obs_hist_pairs = [(obs_nid, hist_nid)]
+
+    histograms = []
+    for obs_nid, hist_nid in obs_hist_pairs:
+        observable = (dpg.get_value(f"txt_obs_{obs_nid}").strip()
+                      if dpg.does_item_exist(f"txt_obs_{obs_nid}") else "met.pt")
+        target  = (dpg.get_value(f"cb_target_{hist_nid}")
+                   if dpg.does_item_exist(f"cb_target_{hist_nid}") else "None")
+        bins    = (str(dpg.get_value(f"txt_bins_{hist_nid}"))
+                   if dpg.does_item_exist(f"txt_bins_{hist_nid}") else "40")
+        rng_min = (str(dpg.get_value(f"txt_range_min_{hist_nid}"))
+                   if dpg.does_item_exist(f"txt_range_min_{hist_nid}") else "0.0")
+        rng_max = (str(dpg.get_value(f"txt_range_max_{hist_nid}"))
+                   if dpg.does_item_exist(f"txt_range_max_{hist_nid}") else "150.0")
+        h5_full = hashlib.md5(
+            (h5_sel + observable + bins + rng_min + rng_max + target).encode()
+        ).hexdigest()
+        histograms.append({
+            "observable": observable,
+            "bins": bins, "min": rng_min, "max": rng_max,
+            "target": target, "h5": h5_full,
+        })
+
+    first = histograms[0] if histograms else {
+        "observable": "met.pt", "bins": "40", "min": "0.0", "max": "150.0",
+        "target": "None", "h5": hashlib.md5(h5_sel.encode()).hexdigest(),
+    }
 
     return {
         "energy": energy, "detector": detector,
-        "observable": observable,
-        "bins": bins, "min": rng_min, "max": rng_max,
-        "target": target, "h5": h5, "h5_sel": h5_sel,
+        "observable": first["observable"],
+        "bins": first["bins"], "min": first["min"], "max": first["max"],
+        "target": first["target"], "h5": first["h5"], "h5_sel": h5_sel,
         "mult_cuts": mult_cuts, "sel_exprs": sel_exprs,
+        "histograms": histograms,
     }
 
 
@@ -614,8 +644,8 @@ def _slot_id(tag: str):
 
 def check_pipeline_connectivity() -> list[int]:
     """Return node ids that are not properly connected in the pipeline."""
-    connected_starts = set(REGISTRY.connections.keys())
-    connected_ends   = set(REGISTRY.connections.values())
+    connected_starts = {s for s, _ in REGISTRY.links.values()}
+    connected_ends   = {e for _, e in REGISTRY.links.values()}
     error_nids = []
 
     for nid, ntype in REGISTRY.nodes.items():

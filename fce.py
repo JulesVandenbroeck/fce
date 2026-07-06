@@ -19,7 +19,7 @@ import dearpygui.dearpygui as dpg
 from PIL import Image
 
 from ui.graph import link_callback, delink_callback, create_node, setup_link_handlers
-from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload
+from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload, MAX_HIST_TEXTURES
 from fce_studio import __version__
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -44,11 +44,12 @@ dpg.create_context()
 # ── Textures ─────────────────────────────────────────────────────────────────
 with dpg.texture_registry():
     empty_buffer = [0.1, 0.1, 0.1, 1.0] * (1272 * 908)
-    dpg.add_dynamic_texture(
-        width=1272, height=908,
-        default_value=empty_buffer,
-        tag="plot_texture_buffer",
-    )
+    for _ti in range(MAX_HIST_TEXTURES):
+        dpg.add_dynamic_texture(
+            width=1272, height=908,
+            default_value=empty_buffer,
+            tag=f"plot_texture_buffer_{_ti}",
+        )
 
     # Logo for About window
     _logo_loaded = False
@@ -265,12 +266,13 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 dpg.add_text("Discovery Significance: N/A",  tag="ui_txt_sig")
 
             dpg.add_spacer(height=6)
-            dpg.add_image(
-                "plot_texture_buffer",
-                tag="canvas_view_frame",
-                width=636,
-                height=454,   # maintains 7:5 ratio of the 700×500 texture
-            )
+            with dpg.group(tag="plot_display_group"):
+                dpg.add_image(
+                    "plot_texture_buffer_0",
+                    tag="canvas_view_frame_0",
+                    width=636,
+                    height=454,
+                )
             with dpg.child_window(
                 tag="console_scroll_container",
                 width=-1,

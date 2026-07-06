@@ -410,17 +410,17 @@ def filter_raw_event_data(arrays, nev, cfg, outHist, _f_s2, _f_s3,
                 _append_event(cache_acc, nlep, nel, nmu, njets, nphot, l1, l2, j1, j2, ph1, ph2, met, w)
 
             # ── Observable evaluation ────────────────────────────────────
-            try:
-                obs_val = eval(observable_target, {"__builtins__": _SAFE_BUILTINS}, local_vars)
-                if obs_val is None:
+            if outHist is not None and observable_target:
+                try:
+                    obs_val = eval(observable_target, {"__builtins__": _SAFE_BUILTINS}, local_vars)
+                    if obs_val is None:
+                        continue
+                    obs_val = float(obs_val)
+                    if obs_val <= -900:
+                        continue
+                    outHist.h["h"].fill(obs_val, weight=w)
+                except Exception:
                     continue
-                obs_val = float(obs_val)
-                if obs_val <= -900:
-                    continue
-            except Exception:
-                continue
-
-            outHist.h["h"].fill(obs_val, weight=w)
 
         except Exception:
             continue

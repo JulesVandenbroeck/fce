@@ -13,6 +13,8 @@ safe_set_state = update_run_state
 FCE_DIR = get_fce_home()
 CURRENT_WORKER = None
 
+MAX_HIST_TEXTURES = 8
+
 
 def log_to_message_center(message_text):
     if dpg.does_item_exist("ui_console_log"):
@@ -31,17 +33,59 @@ from PIL import Image
 import numpy as np
 
 
-def refresh_ui_canvas():
-    img_path = os.path.join(FCE_DIR, "hist.png")
-    if os.path.exists(img_path):
-        try:
-            img = Image.open(img_path).convert("RGBA")
-            img_resized = img.resize((1272, 908), Image.Resampling.LANCZOS)
-            pixel_array = np.array(img_resized, dtype=np.float32) / 255.0
-            if dpg.does_item_exist("plot_texture_buffer"):
-                dpg.set_value("plot_texture_buffer", pixel_array.ravel().tolist())
-        except Exception:
-            pass
+def _load_png_to_texture(png_path: str, texture_tag: str) -> bool:
+    """Load a PNG into a DPG dynamic texture. Returns True on success."""
+    if not os.path.exists(png_path):
+        return False
+    try:
+        img = Image.open(png_path).convert("RGBA")
+        img_resized = img.resize((1272, 908), Image.Resampling.LANCZOS)
+        pixel_array = np.array(img_resized, dtype=np.float32) / 255.0
+        if dpg.does_item_exist(texture_tag):
+            dpg.set_value(texture_tag, pixel_array.ravel().tolist())
+        return True
+    except Exception:
+        return False
+
+
+def refresh_ui_canvas(n_histograms: int = 1, hist_labels: list | None = None):
+    """Load plot PNGs into textures and rebuild the plot display group."""
+    if not dpg.does_item_exist("plot_display_group"):
+        return
+
+    loaded = []
+    for i in range(min(n_histograms, MAX_HIST_TEXTURES)):
+        png_path = os.path.join(FCE_DIR, f"hist_{i}.png")
+        ok = _load_png_to_texture(png_path, f"plot_texture_buffer_{i}")
+        if ok:
+            loaded.append(i)
+
+    if not loaded:
+        return
+
+    dpg.delete_item("plot_display_group", children_only=True)
+
+    if len(loaded) == 1:
+        dpg.add_image(
+            f"plot_texture_buffer_{loaded[0]}",
+            tag="canvas_view_frame_0",
+            width=636, height=454,
+            parent="plot_display_group",
+        )
+    else:
+        labels = hist_labels or []
+        for i in loaded:
+            label = labels[i] if i < len(labels) else f"Histogram {i + 1}"
+            with dpg.collapsing_header(
+                label=label,
+                default_open=False,
+                parent="plot_display_group",
+            ):
+                dpg.add_image(
+                    f"plot_texture_buffer_{i}",
+                    tag=f"canvas_view_frame_{i}",
+                    width=636, height=454,
+                )
 
 
 def _frame_poll_callback(sender=None, app_data=None, user_data=None):
@@ -54,7 +98,11 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
         else:
             dpg.set_value("ui_progress_bar", 1.0)
             dpg.configure_item("ui_progress_bar", overlay="100%")
-            refresh_ui_canvas()
+
+            # Refresh plots — use the stored histogram count from last run
+            n = getattr(_frame_poll_callback, "_last_n_hist", 1)
+            labels = getattr(_frame_poll_callback, "_last_hist_labels", None)
+            refresh_ui_canvas(n_histograms=n, hist_labels=labels)
             log_to_message_center("Completed.")
 
             # Update fit results if available
@@ -137,6 +185,12 @@ def trigger_analysis_pipeline():
     safe_set_state("stop",     False)
 
     cfg = compile_graph_topology()
+
+    # Store histogram count for display after run
+    histograms = cfg.get("histograms", [])
+    _frame_poll_callback._last_n_hist = max(1, len(histograms))
+    _frame_poll_callback._last_hist_labels = None  # Feature 2 (node naming) will populate this
+
     dpg.configure_item("btn_trigger", label="Stop (Processing..)", enabled=True)
 
     CURRENT_WORKER = threading.Thread(target=execute_analysis, args=(cfg, None), daemon=True)

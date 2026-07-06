@@ -53,13 +53,23 @@ def execute_analysis(cfg, _unused):
         except Exception as plot_err:
             safe_set_state("status_msg", f"Plot error: {plot_err}")
 
-        # Statistical fit (if requested)
-        if cfg.get("target", "None") not in ("None", None, ""):
+        # Statistical fit for each histogram that requests one
+        histograms = cfg.get("histograms", [{
+            "observable": cfg["observable"],
+            "bins": cfg["bins"], "min": cfg["min"], "max": cfg["max"],
+            "target": cfg["target"], "h5": cfg["h5"],
+        }])
+        for i, hcfg in enumerate(histograms):
+            if hcfg.get("target", "None") in ("None", None, ""):
+                continue
             try:
                 from engine.fitter import run_fit
-                mu, sig = run_fit(cfg, samples, en)
+                fit_cfg = dict(cfg)
+                fit_cfg.update(hcfg)
+                mu, sig = run_fit(fit_cfg, samples, en, hist_idx=i)
                 safe_set_state("fit_mu",  mu)
                 safe_set_state("fit_sig", sig)
+                break  # expose first successful fit result in the UI
             except Exception as fit_err:
                 safe_set_state("status_msg", f"Fit error: {fit_err}")
 
