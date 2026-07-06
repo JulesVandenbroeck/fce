@@ -101,6 +101,7 @@ Available in Selection and Observable nodes:
 - **Undo (Ctrl+Z)**: Restores the last deleted node or link. History depth is 10. Node undo also restores connected links and all widget values.
 - **Right-click on a link**: Deletes the hovered link (short click, < 5 px movement).
 - **Initial nodes**: Created pre-connected (DataSource → Multiplicity → Selection → Observable → Histogram) with named labels. `create_node()` accepts an optional `name` parameter.
+- **Node palette**: A fixed 70 px bar at the bottom of the window lists four draggable node templates (Multiplicity, Selection, Observable, Histogram). Drag any button onto the node editor canvas to create that node type at the drop position. Uses DPG native `drag_payload` on each button and `drop_callback` on the `node_editor_pane` child_window. Drop position is computed via `dpg.get_item_pos("node_editor_pane")` (screen-space origin) subtracted from `dpg.get_mouse_pos(local=False)`.
 
 ## Testing approach
 
