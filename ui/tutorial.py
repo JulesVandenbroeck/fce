@@ -237,17 +237,22 @@ def _build_window():
         modal=False, show=False,
         width=_WIN_W, height=_WIN_H,
         no_resize=True, no_collapse=True,
+        no_scrollbar=True,
         on_close=_on_skip,
     ):
-        dpg.add_text("", tag="_tut_title", color=(255, 200, 50, 255))
-        if _state.LARGE_FONT is not None:
-            dpg.bind_item_font("_tut_title", _state.LARGE_FONT)
+        # Content area fills all height except the bottom nav bar (~40 px).
+        # height=-40 means "leave 40 px at the bottom of the parent's content
+        # area", so the nav row is always visible regardless of text length.
+        with dpg.child_window(width=-1, height=-40, border=False):
+            dpg.add_text("", tag="_tut_title", color=(255, 200, 50, 255))
+            if _state.LARGE_FONT is not None:
+                dpg.bind_item_font("_tut_title", _state.LARGE_FONT)
+            dpg.add_separator()
+            dpg.add_spacer(height=4)
+            dpg.add_text("", tag="_tut_body", wrap=0)
+        # Nav bar — always at the bottom
         dpg.add_separator()
         dpg.add_spacer(height=4)
-        dpg.add_text("", tag="_tut_body", wrap=_WIN_W - 28)
-        dpg.add_spacer(height=6)
-        dpg.add_separator()
-        dpg.add_spacer(height=6)
         with dpg.group(horizontal=True):
             dpg.add_button(label="< Prev", tag="_tut_prev",
                            callback=_on_prev, width=90)
