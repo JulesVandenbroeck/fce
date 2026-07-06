@@ -234,7 +234,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
     with dpg.group(horizontal=True):
 
         # Left: node editor (leaves room for palette at bottom)
-        with dpg.child_window(width=-670, height=-95, border=False,
+        with dpg.child_window(width=-670, height=-75, border=False,
                               tag="node_editor_pane",
                               drop_callback=on_node_editor_drop):
             with dpg.node_editor(
@@ -247,7 +247,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 pass
 
         # Right: controls + plot + console
-        with dpg.child_window(width=660, height=-95, border=False):
+        with dpg.child_window(width=660, height=-75, border=False):
 
             dpg.add_spacer(height=22)
             dpg.add_progress_bar(
@@ -297,11 +297,17 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 )
 
     # ── Node palette (bottom bar) — must be inside the primary window ─────
-    with dpg.child_window(width=-1, height=90, border=True,
+    # Palette height 70 px; buttons 44 px → top spacer = (70-44)//2 = 13 px
+    with dpg.child_window(width=-1, height=70, border=True,
                           tag="node_palette_bar"):
-        dpg.add_text("Drag to canvas ›", tag="palette_drag_text", indent=0)
-        dpg.add_spacer(height=2)
-        with dpg.group(horizontal=True, tag="palette_btn_group"):
+        dpg.add_spacer(height=13)
+        with dpg.group(horizontal=True):
+            dpg.add_spacer(width=8)
+            # Vertical sub-group centres the label against the 44 px buttons
+            with dpg.group(horizontal=False):
+                dpg.add_spacer(height=15)   # (44-13)//2 ≈ 15 px
+                dpg.add_text("Drag to canvas ›")
+            dpg.add_spacer(width=12)
             for _pt, _plabel in [
                 ("Multiplicity", "Multiplicity"),
                 ("Selection",    "Selection"),
@@ -338,17 +344,6 @@ for _out_nid, _in_nid in [(0, 1), (1, 2), (2, 3), (3, 4)]:
         pass
 
 setup_link_handlers()
-
-
-def _center_palette():
-    """Center palette text and button group once the viewport width is known."""
-    vp_w = dpg.get_viewport_width()
-    # "Drag to canvas ›" ≈ 120 px; buttons 4×160 + 4×8 spacers ≈ 672 px
-    dpg.configure_item("palette_drag_text", indent=max(0, (vp_w - 120) // 2))
-    dpg.configure_item("palette_btn_group", indent=max(0, (vp_w - 672) // 2))
-
-
-dpg.set_frame_callback(frame=1, callback=_center_palette)
 
 # ── Viewport ──────────────────────────────────────────────────────────────────
 dpg.create_viewport(
