@@ -18,7 +18,7 @@ import numpy as np
 import dearpygui.dearpygui as dpg
 from PIL import Image
 
-from ui.graph import link_callback, delink_callback, create_node, setup_link_handlers
+from ui.graph import link_callback, delink_callback, create_node, setup_link_handlers, on_node_editor_drop
 from ui.state import REGISTRY
 from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload, MAX_HIST_TEXTURES
 import ui.state as _ui_state
@@ -233,8 +233,8 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
     # ── Layout: node editor (left) + control panel with console (right) ───
     with dpg.group(horizontal=True):
 
-        # Left: node editor (full height)
-        with dpg.child_window(width=-670, height=-1, border=False):
+        # Left: node editor (leaves room for palette at bottom)
+        with dpg.child_window(width=-670, height=-75, border=False):
             with dpg.node_editor(
                 tag="node_editor_container",
                 callback=link_callback,
@@ -245,7 +245,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 pass
 
         # Right: controls + plot + console
-        with dpg.child_window(width=660, height=-1, border=False):
+        with dpg.child_window(width=660, height=-75, border=False):
 
             dpg.add_spacer(height=22)
             dpg.add_progress_bar(
@@ -294,6 +294,34 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     wrap=0,
                 )
 
+# ── Node palette (bottom bar) ─────────────────────────────────────────────────
+_PALETTE_NODES = [
+    ("Multiplicity", "Multiplicity",
+     "Filter by minimum object counts\n(leptons, jets, photons)"),
+    ("Selection",    "Selection",
+     "Filter events with a boolean expression\n(e.g.  nlep >= 2)"),
+    ("Observable",   "Observable",
+     "Physics quantity to histogram\n(e.g.  met.pt  or  (l1.p4+l2.p4).mass)"),
+    ("Histogram",    "Histogram",
+     "Plot histogram\n(bins, range, optional fit signal)"),
+]
+
+with dpg.child_window(width=-1, height=68, border=True,
+                      tag="node_palette_bar"):
+    dpg.add_spacer(height=4)
+    with dpg.group(horizontal=True):
+        dpg.add_spacer(width=8)
+        dpg.add_text("Drag to canvas ›")
+        dpg.add_spacer(width=12)
+        for _pt, _plabel, _ptooltip in _PALETTE_NODES:
+            _pbtn = dpg.add_button(label=_plabel, width=160, height=40)
+            with dpg.drag_payload(parent=_pbtn, drag_data=_pt,
+                                  label=f"  + {_plabel}  "):
+                pass
+            with dpg.tooltip(parent=_pbtn):
+                dpg.add_text(_ptooltip)
+            dpg.add_spacer(width=8)
+
 # ── Bind large font to Run button ─────────────────────────────────────────────
 if _large_font is not None:
     dpg.bind_item_font("btn_trigger", _large_font)
@@ -318,6 +346,7 @@ for _out_nid, _in_nid in [(0, 1), (1, 2), (2, 3), (3, 4)]:
         pass
 
 setup_link_handlers()
+dpg.set_item_drop_callback("node_editor_container", on_node_editor_drop)
 
 # ── Viewport ──────────────────────────────────────────────────────────────────
 dpg.create_viewport(

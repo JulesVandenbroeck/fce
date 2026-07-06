@@ -874,6 +874,25 @@ def create_node(node_type: str, pos: list | None = None, name: str | None = None
 
 
 # ---------------------------------------------------------------------------
+# Node palette drag-and-drop drop handler
+# ---------------------------------------------------------------------------
+
+def on_node_editor_drop(sender, app_data, user_data):
+    """Create a node at the cursor position when dropped from the palette."""
+    node_type = app_data
+    if not node_type or not isinstance(node_type, str):
+        return
+    pos = dpg.get_mouse_pos(local=False)
+    try:
+        ne_min = dpg.get_item_rect_min("node_editor_container")
+        local_x = max(10, int(pos[0] - ne_min[0]))
+        local_y = max(10, int(pos[1] - ne_min[1]))
+    except Exception:
+        local_x, local_y = 100, 100
+    create_node(node_type, pos=[local_x, local_y])
+
+
+# ---------------------------------------------------------------------------
 # Graph topology compiler
 # ---------------------------------------------------------------------------
 
