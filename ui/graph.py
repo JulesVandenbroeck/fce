@@ -884,7 +884,7 @@ def on_node_editor_drop(sender, app_data, user_data):
         return
     pos = dpg.get_mouse_pos(local=False)
     try:
-        ne_min = dpg.get_item_rect_min("node_editor_container")
+        ne_min = dpg.get_item_rect_min("node_editor_pane")
         local_x = max(10, int(pos[0] - ne_min[0]))
         local_y = max(10, int(pos[1] - ne_min[1]))
     except Exception:

@@ -234,7 +234,9 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
     with dpg.group(horizontal=True):
 
         # Left: node editor (leaves room for palette at bottom)
-        with dpg.child_window(width=-670, height=-75, border=False):
+        with dpg.child_window(width=-670, height=-75, border=False,
+                              tag="node_editor_pane",
+                              drop_callback=on_node_editor_drop):
             with dpg.node_editor(
                 tag="node_editor_container",
                 callback=link_callback,
@@ -344,7 +346,6 @@ for _out_nid, _in_nid in [(0, 1), (1, 2), (2, 3), (3, 4)]:
         pass
 
 setup_link_handlers()
-dpg.set_item_drop_callback("node_editor_container", on_node_editor_drop)
 
 # ── Viewport ──────────────────────────────────────────────────────────────────
 dpg.create_viewport(
