@@ -143,8 +143,18 @@ def _on_right_click_link(sender=None, app_data=None, user_data=None):
 
 _PAN_SPEED = 20  # pixels per scroll notch
 
+# Right-click drag-to-pan state
 _PAN_ACTIVE = False
 _PAN_LAST   = [0.0, 0.0]
+_PAN_START  = [0.0, 0.0]  # used to distinguish click vs drag for link deletion
+
+
+def _pan_all_nodes(dx: float, dy: float):
+    for nid in list(REGISTRY.nodes.keys()):
+        node_tag = f"node_{nid}"
+        if dpg.does_item_exist(node_tag):
+            x, y = dpg.get_item_pos(node_tag)
+            dpg.set_item_pos(node_tag, [x + dx, y + dy])
 
 
 def _on_wheel_pan(sender=None, app_data=None, user_data=None):
@@ -157,49 +167,47 @@ def _on_wheel_pan(sender=None, app_data=None, user_data=None):
     shift = dpg.is_key_down(dpg.mvKey_LShift) or dpg.is_key_down(dpg.mvKey_RShift)
     dx = int(delta * _PAN_SPEED) if shift else 0
     dy = int(delta * _PAN_SPEED) if not shift else 0
-    for nid in list(REGISTRY.nodes.keys()):
-        node_tag = f"node_{nid}"
-        if dpg.does_item_exist(node_tag):
-            x, y = dpg.get_item_pos(node_tag)
-            dpg.set_item_pos(node_tag, [x + dx, y + dy])
+    _pan_all_nodes(dx, dy)
 
 
 def _on_canvas_mouse_down(sender=None, app_data=None, user_data=None):
-    """Start drag-pan when the user clicks on empty canvas space."""
+    """Start right-click drag-pan on the empty canvas."""
     global _PAN_ACTIVE
-    if app_data != 0:  # left button only
+    if app_data != 1:  # right button only
         return
     if not dpg.does_item_exist("node_editor_container"):
         return
     if not dpg.is_item_hovered("node_editor_container"):
         return
-    for nid in REGISTRY.nodes:
-        if dpg.does_item_exist(f"node_{nid}") and dpg.is_item_hovered(f"node_{nid}"):
-            return
     _PAN_ACTIVE = True
     pos = dpg.get_mouse_pos(local=False)
     _PAN_LAST[0], _PAN_LAST[1] = pos[0], pos[1]
+    _PAN_START[0], _PAN_START[1] = pos[0], pos[1]
 
 
 def _on_canvas_mouse_release(sender=None, app_data=None, user_data=None):
+    """End right-click drag; treat as a click (link delete) if mouse barely moved."""
     global _PAN_ACTIVE  # noqa: F824
-    if app_data == 0:
+    if app_data != 1:
+        return
+    if _PAN_ACTIVE:
+        pos = dpg.get_mouse_pos(local=False)
+        dx = pos[0] - _PAN_START[0]
+        dy = pos[1] - _PAN_START[1]
+        if dx * dx + dy * dy < 25:  # < 5 px → treat as right-click
+            _on_right_click_link()
         _PAN_ACTIVE = False
 
 
 def _on_canvas_mouse_move(sender=None, app_data=None, user_data=None):
-    """Translate all nodes while left-button drag-pan is active."""
+    """Translate all nodes while right-button drag-pan is active."""
     if not _PAN_ACTIVE:
         return
     pos = dpg.get_mouse_pos(local=False)
     dx = pos[0] - _PAN_LAST[0]
     dy = pos[1] - _PAN_LAST[1]
     _PAN_LAST[0], _PAN_LAST[1] = pos[0], pos[1]
-    for nid in list(REGISTRY.nodes.keys()):
-        node_tag = f"node_{nid}"
-        if dpg.does_item_exist(node_tag):
-            x, y = dpg.get_item_pos(node_tag)
-            dpg.set_item_pos(node_tag, [x + dx, y + dy])
+    _pan_all_nodes(dx, dy)
 
 
 def _on_key_delete(sender=None, app_data=None, user_data=None):
@@ -220,17 +228,13 @@ def _on_key_delete(sender=None, app_data=None, user_data=None):
 
 def setup_link_handlers():
     with dpg.handler_registry():
-        dpg.add_mouse_click_handler(
-            button=dpg.mvMouseButton_Right,
-            callback=_on_right_click_link,
-        )
         dpg.add_mouse_wheel_handler(callback=_on_wheel_pan)
         dpg.add_mouse_down_handler(
-            button=dpg.mvMouseButton_Left,
+            button=dpg.mvMouseButton_Right,
             callback=_on_canvas_mouse_down,
         )
         dpg.add_mouse_release_handler(
-            button=dpg.mvMouseButton_Left,
+            button=dpg.mvMouseButton_Right,
             callback=_on_canvas_mouse_release,
         )
         dpg.add_mouse_move_handler(callback=_on_canvas_mouse_move)
@@ -600,16 +604,28 @@ def _show_help_window(sender=None, app_data=None, user_data=None):
     dpg.focus_item("help_expr_window")
 
 
-# Spacer between the name/edit area and the right-side control buttons (×, ?, !)
-_NAME_BTN_SPACER = {
-    "DataSource":   115,
-    "Multiplicity":  75,
-    "Selection":    115,
-    "Observable":    88,
-    "Histogram":    100,
-}
-
 _HAS_HELP = {"Selection", "Observable"}
+
+# Estimated pixel width of the widest content widget per node type.
+# Used to right-align the × / ? buttons in the name row.
+_NODE_CONTENT_PX = {
+    "DataSource":   195,
+    "Multiplicity": 200,
+    "Selection":    250,
+    "Observable":   228,
+    "Histogram":    208,
+}
+_CHAR_PX   = 7   # approximate pixels per character (default DPG font ~13px)
+_EDIT_BTN  = 20  # ✏ / ✔ small button width
+_CLOSE_BTN = 18  # small button width (×, ?, !)
+
+
+def _name_btn_spacer(node_type: str, display_name: str) -> int:
+    content_w = _NODE_CONTENT_PX.get(node_type, 200)
+    name_w    = len(display_name) * _CHAR_PX
+    btn_w     = (_CLOSE_BTN * 2) if node_type in _HAS_HELP else _CLOSE_BTN  # ? + × (! hidden)
+    spacer    = content_w - name_w - _EDIT_BTN - btn_w
+    return max(5, spacer)
 
 
 def create_node(node_type: str, pos: list | None = None, name: str | None = None):
@@ -670,7 +686,7 @@ def create_node(node_type: str, pos: list | None = None, name: str | None = None
     dpg.bind_item_handler_registry(f"txt_name_{nid}", f"name_handler_{nid}")
 
     # Spacer pushes ×/? buttons toward the right edge of the node
-    dpg.add_spacer(width=_NAME_BTN_SPACER.get(node_type, 90), parent=name_grp)
+    dpg.add_spacer(width=_name_btn_spacer(node_type, display_name), parent=name_grp)
 
     if node_type in _HAS_HELP:
         dpg.add_button(

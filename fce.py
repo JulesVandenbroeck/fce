@@ -19,6 +19,7 @@ import dearpygui.dearpygui as dpg
 from PIL import Image
 
 from ui.graph import link_callback, delink_callback, create_node, setup_link_handlers
+from ui.state import REGISTRY
 from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload, MAX_HIST_TEXTURES
 import ui.state as _ui_state
 from fce_studio import __version__
@@ -298,11 +299,23 @@ if _large_font is not None:
     dpg.bind_item_font("btn_trigger", _large_font)
 
 # ── Create initial nodes ──────────────────────────────────────────────────────
-create_node("DataSource",   pos=[30,  80], name="IDEA 91 GeV data")
-create_node("Multiplicity", pos=[290, 80], name="all events")
-create_node("Selection",    pos=[560, 80], name="2 leptons")
-create_node("Observable",   pos=[870, 80], name="MET pT")
-create_node("Histogram",    pos=[1160, 80], name="MET pT")
+_X_STEP = 310  # horizontal gap between nodes
+create_node("DataSource",   pos=[30,              100], name="IDEA 91 GeV data")
+create_node("Multiplicity", pos=[30 + _X_STEP,    100], name="all events")
+create_node("Selection",    pos=[30 + _X_STEP * 2, 100], name="2 leptons")
+create_node("Observable",   pos=[30 + _X_STEP * 3, 100], name="MET pT")
+create_node("Histogram",    pos=[30 + _X_STEP * 4, 100], name="MET pT")
+
+# ── Connect initial nodes in pipeline order ───────────────────────────────────
+for _out_nid, _in_nid in [(0, 1), (1, 2), (2, 3), (3, 4)]:
+    try:
+        _s = dpg.get_alias_id(f"slot_out_{_out_nid}")
+        _e = dpg.get_alias_id(f"slot_in_{_in_nid}")
+        _lid = dpg.add_node_link(_s, _e, parent="node_editor_container")
+        REGISTRY.links[_lid] = (_s, _e)
+        REGISTRY.connections[_s] = _e
+    except Exception:
+        pass
 
 setup_link_handlers()
 
