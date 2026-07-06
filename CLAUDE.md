@@ -4,7 +4,7 @@
 You are working on a learning tool for particle physics data analysis at The Future Collider Experiment. The goal is to implement UI based changes suggested by the user. The tool is based on a drag and drop coding structure in python using DearPyGui framework. The framework exists out of building blocks that can be connected to create a pipeline of data analysis strategy. The building blocks of the tool are Data, Multiplicity, Selection, Histogram, Observable. 
 
 ## Rules
-- The main github branch is `main` and remote is `juvanden`. 
+- The main github branch is `main` and remote is `juvanden` (git@github.com:JulesVandenbroeck/fce.git).
 - For each request to add or change a feature of the learning tool  by the user the following steps need to be done in order:
     1) A new github branch is created for the feature. In case of small changes multiple features can be bundled into 1 branch.
     2) you develop the code for the feature
@@ -13,9 +13,10 @@ You are working on a learning tool for particle physics data analysis at The Fut
     4) The pull request can only be merged by the user after review.
 - In case of uncertainty in the implementation or UI of a feature always ask the user to resolve. Never make assumptions, instead give options to the user.
 - Run all `git` commands with `rtk` in front if this is not done by default
+- Always open pull requests against the `juvanden` remote (JulesVandenbroeck/fce). Use `gh pr create --repo JulesVandenbroeck/fce`.
 
 ## context
-tool github: https://github.com/JulesVandenbroeck/fce
+tool github: https://github.com/JulesVandenbroeck/fce (remote: juvanden)
 DearPyGui framework: https://github.com/hoffstadt/DearPyGui
 
 ## Repository structure
