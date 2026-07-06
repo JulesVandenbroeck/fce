@@ -4,13 +4,15 @@
 You are working on a learning tool for particle physics data analysis at The Future Collider Experiment. The goal is to implement UI based changes suggested by the user. The tool is based on a drag and drop coding structure in python using DearPyGui framework. The framework exists out of building blocks that can be connected to create a pipeline of data analysis strategy. The building blocks of the tool are Data, Multiplicity, Selection, Histogram, Observable. 
 
 ## Rules
-- The main github branch is `main` and remote is `juvanden` (git@github.com:JulesVandenbroeck/fce.git).
-- For each request to add or change a feature of the learning tool  by the user the following steps need to be done in order:
+- The main github branch is `main` and remote is `juvanden` (git@github.com:JulesVandenbroeck/fce.git). 
+- Feature requests are done trough a prompt in @prompt.md.
+- For each request to add or change a feature of the learning tool by the user the following steps need to be done in order:
     1) A new github branch is created for the feature. In case of small changes multiple features can be bundled into 1 branch.
     2) you develop the code for the feature
-    3) Default tests are run on the feature. If all tests pass the chnges are commited and the feature is ready for review.
-    2) The feature is summarized in a pull request to main by you after which it is reviewed by the user. If modifications are requested by the user, go back to step 2.
-    4) The pull request can only be merged by the user after review.
+    3) Default tests are run on the feature. If all tests pass the changes are commited and the feature is ready for review.
+    4) The feature is summarized in a pull request to main by you after which it is reviewed by the user. If modifications are requested by the user, go back to step 2.
+    5) The pull request can only be merged by the user after review.
+    6) Update the documentation in CLAUDE.md if applicable and place the feature prompt from prompt.md to a history.md file in .claude.
 - In case of uncertainty in the implementation or UI of a feature always ask the user to resolve. Never make assumptions, instead give options to the user.
 - Run all `git` commands with `rtk` in front if this is not done by default
 - Always open pull requests against the `juvanden` remote (JulesVandenbroeck/fce). Use `gh pr create --repo JulesVandenbroeck/fce`.
@@ -55,10 +57,10 @@ Nodes are connected left-to-right in a strict hierarchy enforced by `NODE_HIERAR
 | 0     | DataSource  | Data         | Selects energy (91/160/240/365 GeV) and detector (IDEA/CLD). Exactly one per graph. |
 | 1     | Multiplicity | Multiplicity | Minimum object counts: leptons (Any/Electron/Muon), jets, photons. Chainable (AND logic). |
 | 2     | Selection   | Selection    | Free-form boolean expression over physics variables. Chainable (AND logic). |
-| 3     | Observable  | Observable   | Arithmetic expression over physics objects for histogramming (e.g. `met.pt`). |
-| 4     | Histogram   | Histogram    | Sets bins, range min/max, and optional signal for statistical fit. |
+| 3     | Observable  | Observable   | Arithmetic expression over physics objects for histogramming (e.g. `met.pt`). Multiple Observable nodes can connect to one Selection node (independent observables, shared selection cache). |
+| 4     | Histogram   | Histogram    | Sets bins, range min/max, and optional signal for statistical fit. Multiple Histogram nodes can connect to one Observable node, each producing a separate plot. Custom node name is used as the collapsing header label in multi-plot display. |
 
-Multiplicity and Selection nodes can be chained to themselves (AND logic). All other connections must go from lower to higher level. Only one DataSource is allowed.
+Multiplicity and Selection nodes can be chained to themselves (AND logic). Multiple Observable nodes may share one Selection (fan-out). Multiple Histogram nodes may share one Observable (fan-out). Only one DataSource is allowed.
 
 ## Physics variables (expressions)
 
@@ -82,13 +84,13 @@ Available in Selection and Observable nodes:
    - Reads `config/samples.json` for the active sample list at the selected energy.
    - `run_physics_loop()` iterates ROOT files with `uproot`, applying cuts via `filter_raw_event_data()`.
    - Two-level cache: selection-level `.npz` cache and histogram-level `.root` cache avoid re-processing.
-   - `render_plots()` produces a matplotlib PNG loaded into the DPG texture buffer.
+   - `render_plots()` produces one PNG per histogram config (`hist_{i}.png`), loaded into separate DPG texture buffers. A single histogram shows as a full-width image; multiple histograms appear in collapsing headers (hidden by default), labelled by custom node name or "Histogram N".
    - Optional `run_fit()` computes signal strength mu and significance via `pyhf`.
 7. `_frame_poll_callback()` polls state every 6 frames, updating the progress bar and canvas.
 
 ## Key state
 
-- `ui/state.py:REGISTRY` -- NodeRegistry tracking all node ids, types, links, and slot mappings.
+- `ui/state.py:REGISTRY` -- NodeRegistry tracking all node ids, types, links, slot mappings, and custom names (`node_names: dict[int, str]`).
 - `ui/state.py:RUN_STATE` -- thread-safe dict: `progress`, `running`, `stop`, `status_msg`, `fit_mu`, `fit_sig`.
 - FCE home directory (`~/.fce` or temp fallback): stores `cache/`, `output/`, `datasets/`.
 
