@@ -87,8 +87,7 @@ with dpg.font_registry():
                 # Smaller font with Dingbats range so ✏ (U+270F) and ✔ (U+2714)
                 # render correctly on node name buttons.
                 with dpg.font(_fp, 13) as _extended_font:
-                    dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
-                    dpg.add_font_range(0x2700, 0x27BF)
+                    pass
                 break
             except Exception:
                 pass
