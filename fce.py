@@ -237,6 +237,8 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
         with dpg.child_window(width=-670, height=-75, border=False,
                               tag="node_editor_pane",
                               drop_callback=on_node_editor_drop):
+            # 1×1 spacer used by on_node_editor_drop to get pane screen origin
+            dpg.add_spacer(width=1, height=1, tag="pane_origin_marker")
             with dpg.node_editor(
                 tag="node_editor_container",
                 callback=link_callback,
