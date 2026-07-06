@@ -31,14 +31,17 @@ NODE_LABELS = {
 
 class NodeRegistry:
     def __init__(self):
-        self.links      = {}   # link_id -> (start_slot, end_slot)
-        self.connections = {}  # start_slot -> end_slot
-        self.nodes      = {}   # node_id (int) -> node_type (str)
-        self.slot_node  = {}   # slot tag / UUID -> node_id
-        self.next_id    = 0
+        self.links       = {}   # link_id -> (start_slot, end_slot)
+        self.connections = {}   # start_slot -> end_slot
+        self.nodes       = {}   # node_id (int) -> node_type (str)
+        self.node_names  = {}   # node_id (int) -> custom name (str)
+        self.slot_node   = {}   # slot tag / UUID -> node_id
+        self.next_id     = 0
 
 
 REGISTRY = NodeRegistry()
+
+EXTENDED_FONT = None  # Set by fce.py; used for Dingbats icon rendering in node buttons
 
 
 def update_run_state(key, value):

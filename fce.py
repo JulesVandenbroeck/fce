@@ -20,6 +20,7 @@ from PIL import Image
 
 from ui.graph import link_callback, delink_callback, create_node, setup_link_handlers
 from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload, MAX_HIST_TEXTURES
+import ui.state as _ui_state
 from fce_studio import __version__
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -68,8 +69,9 @@ with dpg.texture_registry():
             except Exception:
                 pass
 
-# ── Font registry (larger font for Run button) ────────────────────────────────
+# ── Font registry ─────────────────────────────────────────────────────────────
 _large_font = None
+_extended_font = None
 with dpg.font_registry():
     _font_candidates = [
         "/System/Library/Fonts/Supplemental/Arial.ttf",
@@ -82,9 +84,15 @@ with dpg.font_registry():
         if os.path.exists(_fp):
             try:
                 _large_font = dpg.add_font(_fp, 20)
+                # Smaller font with Dingbats range so ✏ (U+270F) and ✔ (U+2714)
+                # render correctly on node name buttons.
+                with dpg.font(_fp, 13) as _extended_font:
+                    pass
                 break
             except Exception:
                 pass
+
+_ui_state.EXTENDED_FONT = _extended_font
 
 # ── Help popup (expression guide) ─────────────────────────────────────────────
 with dpg.window(tag="help_expr_window", label="Expression Guide",
