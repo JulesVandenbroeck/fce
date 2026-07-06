@@ -374,6 +374,10 @@ def delete_node(nid: int):
     REGISTRY.nodes.pop(nid, None)
     REGISTRY.node_names.pop(nid, None)
 
+    handler_tag = f"name_handler_{nid}"
+    if dpg.does_item_exist(handler_tag):
+        dpg.delete_item(handler_tag)
+
     node_tag = f"node_{nid}"
     if dpg.does_item_exist(node_tag):
         dpg.delete_item(node_tag)
@@ -458,35 +462,60 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
 # Node name editing
 # ---------------------------------------------------------------------------
 
-def _on_name_edit_click(sender, app_data, user_data):
-    """Toggle the inline name input when the pencil button is clicked."""
-    nid = user_data
+_ICON_EDIT = "✍"       # writing hand -- shown when node is in view mode
+_ICON_SAVE = "💾"   # floppy disk  -- shown when node is in edit mode
+
+
+def _save_node_name(nid: int):
+    """Persist the current input value and return the node to view mode.
+
+    Safe to call even if the edit field is already hidden (no-op in that case).
+    """
     edit_tag  = f"txt_name_{nid}"
     label_tag = f"lbl_name_{nid}"
-    if not dpg.does_item_exist(edit_tag):
-        return
-    is_visible = dpg.is_item_visible(edit_tag)
-    if not is_visible:
-        dpg.set_value(edit_tag, REGISTRY.node_names.get(nid, ""))
-    dpg.configure_item(edit_tag,  show=not is_visible)
-    dpg.configure_item(label_tag, show=is_visible)
-    if not is_visible:
-        dpg.focus_item(edit_tag)
-
-
-def _on_name_changed(sender, app_data, user_data):
-    """Persist the custom name, update label text, and hide the input field."""
-    nid = user_data
-    new_name = app_data.strip()
+    btn_tag   = f"btn_name_{nid}"
+    if not dpg.does_item_exist(edit_tag) or not dpg.is_item_visible(edit_tag):
+        return  # already in view mode — nothing to do
+    new_name = dpg.get_value(edit_tag).strip()
     REGISTRY.node_names[nid] = new_name
-    label_tag = f"lbl_name_{nid}"
     if dpg.does_item_exist(label_tag):
         display = new_name if new_name else NODE_LABELS.get(REGISTRY.nodes.get(nid, ""), "")
         dpg.set_value(label_tag, display)
         dpg.configure_item(label_tag, show=True)
-    edit_tag = f"txt_name_{nid}"
-    if dpg.does_item_exist(edit_tag):
-        dpg.configure_item(edit_tag, show=False)
+    dpg.configure_item(edit_tag, show=False)
+    if dpg.does_item_exist(btn_tag):
+        dpg.configure_item(btn_tag, label=_ICON_EDIT)
+
+
+def _on_name_edit_click(sender, app_data, user_data):
+    """Toggle between view mode (writing-hand) and edit mode (floppy-disk)."""
+    nid = user_data
+    edit_tag  = f"txt_name_{nid}"
+    label_tag = f"lbl_name_{nid}"
+    btn_tag   = f"btn_name_{nid}"
+    if not dpg.does_item_exist(edit_tag):
+        return
+    if dpg.is_item_visible(edit_tag):
+        # Floppy disk clicked — save and exit edit mode
+        _save_node_name(nid)
+    else:
+        # Writing-hand clicked — enter edit mode
+        dpg.set_value(edit_tag, REGISTRY.node_names.get(nid, ""))
+        dpg.configure_item(label_tag, show=False)
+        dpg.configure_item(edit_tag,  show=True)
+        if dpg.does_item_exist(btn_tag):
+            dpg.configure_item(btn_tag, label=_ICON_SAVE)
+        dpg.focus_item(edit_tag)
+
+
+def _on_name_changed(sender, app_data, user_data):
+    """Called when Enter is pressed — delegates to _save_node_name."""
+    _save_node_name(user_data)
+
+
+def _on_name_deactivated(sender, app_data, user_data):
+    """Called when the input field loses focus — saves name (click-away)."""
+    _save_node_name(user_data)
 
 
 # ---------------------------------------------------------------------------
@@ -549,7 +578,7 @@ def create_node(node_type: str, pos: list | None = None):
     dpg.add_group(horizontal=True, tag=name_grp, parent=name_attr)
     dpg.add_text(default_name, tag=f"lbl_name_{nid}", parent=name_grp)
     dpg.add_button(
-        label="e", tag=f"btn_name_{nid}", small=True,
+        label=_ICON_EDIT, tag=f"btn_name_{nid}", small=True,
         callback=_on_name_edit_click,
         user_data=nid, parent=name_grp,
     )
@@ -559,6 +588,13 @@ def create_node(node_type: str, pos: list | None = None):
         callback=_on_name_changed,
         user_data=nid, parent=name_grp,
     )
+    # Bind deactivated handler so clicking away also saves the name
+    with dpg.item_handler_registry(tag=f"name_handler_{nid}"):
+        dpg.add_item_deactivated_handler(
+            callback=_on_name_deactivated,
+            user_data=nid,
+        )
+    dpg.bind_item_handler_registry(f"txt_name_{nid}", f"name_handler_{nid}")
 
     # ── Close (×) row — with optional ? button for expr nodes ────────────
     close_attr = f"slot_close_{nid}"
