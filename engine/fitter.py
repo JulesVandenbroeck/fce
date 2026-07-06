@@ -10,7 +10,7 @@ from paths import get_fce_home
 hdir = get_fce_home()
 
 
-def run_fit(cfg, samples, en):
+def run_fit(cfg, samples, en, hist_idx=0):
     """Run pyhf signal fit. Returns (mu_best, significance) or (None, None)."""
     target = cfg.get("target", "None")
     if not target or target == "None":
@@ -21,7 +21,7 @@ def run_fit(cfg, samples, en):
     data_obs    = None
 
     for s in samples.get(en, {}).keys():
-        root_out = os.path.join(hdir, "output", f"{s}.root")
+        root_out = os.path.join(hdir, "output", f"hist{hist_idx}_{s}.root")
         if not os.path.exists(root_out):
             continue
         try:

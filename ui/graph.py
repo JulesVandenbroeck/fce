@@ -1,5 +1,6 @@
 import re
 import dearpygui.dearpygui as dpg
+import ui.state as _state
 from ui.state import REGISTRY, NODE_HIERARCHY, NODE_LABELS
 
 # ---------------------------------------------------------------------------
@@ -247,20 +248,35 @@ def validate_node_expressions() -> list[tuple[int, str]]:
 
 
 def mark_nodes_from_pipeline_check(error_nids: list[int], all_nids: list[int]):
-    connected_starts = set(REGISTRY.connections.keys())
-    connected_ends   = set(REGISTRY.connections.values())
+    connected_starts = {s for s, _ in REGISTRY.links.values()}
+    connected_ends   = {e for _, e in REGISTRY.links.values()}
     for nid in all_nids:
         if nid in error_nids:
             ntype = REGISTRY.nodes.get(nid, "")
             parts = []
-            if ntype != "Histogram":
+            if ntype == "DataSource":
                 sid = _slot_id(f"slot_out_{nid}")
                 if sid is None or sid not in connected_starts:
                     parts.append("output not connected")
-            if ntype != "DataSource":
+            elif ntype == "Multiplicity":
+                sid = _slot_id(f"slot_out_{nid}")
+                if sid is None or sid not in connected_starts:
+                    parts.append("output not connected")
                 sid = _slot_id(f"slot_in_{nid}")
                 if sid is None or sid not in connected_ends:
                     parts.append("input not connected")
+            elif ntype == "Selection":
+                sid = _slot_id(f"slot_in_{nid}")
+                if sid is None or sid not in connected_ends:
+                    parts.append("input not connected")
+            elif ntype == "Observable":
+                sid = _slot_id(f"slot_out_{nid}")
+                if sid is None or sid not in connected_starts:
+                    parts.append("output not connected (connect to a Histogram)")
+            elif ntype == "Histogram":
+                sid = _slot_id(f"slot_in_{nid}")
+                if sid is None or sid not in connected_ends:
+                    parts.append("input not connected (connect from an Observable)")
             _set_node_error(nid, True, "Pipeline: " + (", ".join(parts) or "not connected"))
         else:
             _set_node_error(nid, False)
@@ -357,6 +373,11 @@ def delete_node(nid: int):
             del REGISTRY.slot_node[k]
 
     REGISTRY.nodes.pop(nid, None)
+    REGISTRY.node_names.pop(nid, None)
+
+    handler_tag = f"name_handler_{nid}"
+    if dpg.does_item_exist(handler_tag):
+        dpg.delete_item(handler_tag)
 
     node_tag = f"node_{nid}"
     if dpg.does_item_exist(node_tag):
@@ -439,6 +460,66 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
 
 
 # ---------------------------------------------------------------------------
+# Node name editing
+# ---------------------------------------------------------------------------
+
+_ICON_EDIT = "✏"  # ✏ PENCIL       -- shown when node is in view mode
+_ICON_SAVE = "✔"  # ✔ HEAVY CHECK  -- shown when node is in edit mode
+
+
+def _save_node_name(nid: int):
+    """Persist the current input value and return the node to view mode.
+
+    Safe to call even if the edit field is already hidden (no-op in that case).
+    """
+    edit_tag  = f"txt_name_{nid}"
+    label_tag = f"lbl_name_{nid}"
+    btn_tag   = f"btn_name_{nid}"
+    if not dpg.does_item_exist(edit_tag) or not dpg.is_item_visible(edit_tag):
+        return  # already in view mode — nothing to do
+    new_name = dpg.get_value(edit_tag).strip()
+    REGISTRY.node_names[nid] = new_name
+    if dpg.does_item_exist(label_tag):
+        display = new_name if new_name else NODE_LABELS.get(REGISTRY.nodes.get(nid, ""), "")
+        dpg.set_value(label_tag, display)
+        dpg.configure_item(label_tag, show=True)
+    dpg.configure_item(edit_tag, show=False)
+    if dpg.does_item_exist(btn_tag):
+        dpg.configure_item(btn_tag, label=_ICON_EDIT)
+
+
+def _on_name_edit_click(sender, app_data, user_data):
+    """Toggle between view mode (writing-hand) and edit mode (floppy-disk)."""
+    nid = user_data
+    edit_tag  = f"txt_name_{nid}"
+    label_tag = f"lbl_name_{nid}"
+    btn_tag   = f"btn_name_{nid}"
+    if not dpg.does_item_exist(edit_tag):
+        return
+    if dpg.is_item_visible(edit_tag):
+        # Floppy disk clicked — save and exit edit mode
+        _save_node_name(nid)
+    else:
+        # Writing-hand clicked — enter edit mode
+        dpg.set_value(edit_tag, REGISTRY.node_names.get(nid, ""))
+        dpg.configure_item(label_tag, show=False)
+        dpg.configure_item(edit_tag,  show=True)
+        if dpg.does_item_exist(btn_tag):
+            dpg.configure_item(btn_tag, label=_ICON_SAVE)
+        dpg.focus_item(edit_tag)
+
+
+def _on_name_changed(sender, app_data, user_data):
+    """Called when Enter is pressed — delegates to _save_node_name."""
+    _save_node_name(user_data)
+
+
+def _on_name_deactivated(sender, app_data, user_data):
+    """Called when the input field loses focus — saves name (click-away)."""
+    _save_node_name(user_data)
+
+
+# ---------------------------------------------------------------------------
 # Help window show
 # ---------------------------------------------------------------------------
 
@@ -486,6 +567,37 @@ def create_node(node_type: str, pos: list | None = None):
         parent="node_editor_container",
         pos=pos,
     )
+
+    # ── Name row — editable node label ───────────────────────────────────
+    default_name = NODE_LABELS.get(node_type, node_type)
+    name_attr = f"slot_name_{nid}"
+    dpg.add_node_attribute(
+        attribute_type=dpg.mvNode_Attr_Static,
+        tag=name_attr, parent=node_tag,
+    )
+    name_grp = f"grp_name_{nid}"
+    dpg.add_group(horizontal=True, tag=name_grp, parent=name_attr)
+    dpg.add_text(default_name, tag=f"lbl_name_{nid}", parent=name_grp)
+    dpg.add_button(
+        label=_ICON_EDIT, tag=f"btn_name_{nid}", small=True,
+        callback=_on_name_edit_click,
+        user_data=nid, parent=name_grp,
+    )
+    if _state.EXTENDED_FONT is not None:
+        dpg.bind_item_font(f"btn_name_{nid}", _state.EXTENDED_FONT)
+    dpg.add_input_text(
+        tag=f"txt_name_{nid}", width=110, show=False,
+        hint="custom name", on_enter=True,
+        callback=_on_name_changed,
+        user_data=nid, parent=name_grp,
+    )
+    # Bind deactivated handler so clicking away also saves the name
+    with dpg.item_handler_registry(tag=f"name_handler_{nid}"):
+        dpg.add_item_deactivated_handler(
+            callback=_on_name_deactivated,
+            user_data=nid,
+        )
+    dpg.bind_item_handler_registry(f"txt_name_{nid}", f"name_handler_{nid}")
 
     # ── Close (×) row — with optional ? button for expr nodes ────────────
     close_attr = f"slot_close_{nid}"
@@ -546,13 +658,14 @@ def create_node(node_type: str, pos: list | None = None):
 # ---------------------------------------------------------------------------
 
 def compile_graph_topology() -> dict:
+    import hashlib
+
     nodes = REGISTRY.nodes
 
-    ds_nids   = [n for n, t in nodes.items() if t == "DataSource"]
-    mul_nids  = [n for n, t in nodes.items() if t == "Multiplicity"]
-    sel_nids  = [n for n, t in nodes.items() if t == "Selection"]
-    obs_nids  = [n for n, t in nodes.items() if t == "Observable"]
-    hist_nids = [n for n, t in nodes.items() if t == "Histogram"]
+    ds_nids  = [n for n, t in nodes.items() if t == "DataSource"]
+    mul_nids = [n for n, t in nodes.items() if t == "Multiplicity"]
+    sel_nids = [n for n, t in nodes.items() if t == "Selection"]
+    obs_nids = [n for n, t in nodes.items() if t == "Observable"]
 
     ds = ds_nids[0] if ds_nids else None
     energy   = dpg.get_value(f"cb_energy_{ds}")   if ds is not None else "91 GeV"
@@ -572,31 +685,62 @@ def compile_graph_topology() -> dict:
         if dpg.does_item_exist(f"txt_sel_{n}") and dpg.get_value(f"txt_sel_{n}").strip()
     ]
 
-    obs  = obs_nids[0]  if obs_nids  else None
-    hist = hist_nids[0] if hist_nids else None
-
-    observable = dpg.get_value(f"txt_obs_{obs}").strip() if obs is not None else "met.pt"
-    target     = dpg.get_value(f"cb_target_{hist}")          if hist is not None else "None"
-    bins       = str(dpg.get_value(f"txt_bins_{hist}"))      if hist is not None else "40"
-    rng_min    = str(dpg.get_value(f"txt_range_min_{hist}")) if hist is not None else "0.0"
-    rng_max    = str(dpg.get_value(f"txt_range_max_{hist}")) if hist is not None else "150.0"
-
-    import hashlib
-    # selection-level hash: changes only when data source or cuts change
     h5_sel = hashlib.md5(
         (energy + detector + str(mult_cuts) + str(sel_exprs)).encode()
     ).hexdigest()
-    # full hash: changes when anything (including observable / bins) changes
-    h5 = hashlib.md5(
-        (h5_sel + observable + bins + rng_min + rng_max + target).encode()
-    ).hexdigest()
+
+    # Build Observable -> Histogram pairs by following graph links
+    obs_hist_pairs = []
+    for _, (start_slot, end_slot) in REGISTRY.links.items():
+        s_nid = REGISTRY.slot_node.get(start_slot)
+        e_nid = REGISTRY.slot_node.get(end_slot)
+        if (s_nid is not None and e_nid is not None
+                and nodes.get(s_nid) == "Observable"
+                and nodes.get(e_nid) == "Histogram"):
+            obs_hist_pairs.append((s_nid, e_nid))
+
+    # Fallback: first obs + first hist (covers single-node case before linking)
+    if not obs_hist_pairs:
+        obs_nid  = obs_nids[0]  if obs_nids  else None
+        hist_nid = next((n for n, t in nodes.items() if t == "Histogram"), None)
+        if obs_nid is not None and hist_nid is not None:
+            obs_hist_pairs = [(obs_nid, hist_nid)]
+
+    histograms = []
+    for obs_nid, hist_nid in obs_hist_pairs:
+        observable = (dpg.get_value(f"txt_obs_{obs_nid}").strip()
+                      if dpg.does_item_exist(f"txt_obs_{obs_nid}") else "met.pt")
+        target  = (dpg.get_value(f"cb_target_{hist_nid}")
+                   if dpg.does_item_exist(f"cb_target_{hist_nid}") else "None")
+        bins    = (str(dpg.get_value(f"txt_bins_{hist_nid}"))
+                   if dpg.does_item_exist(f"txt_bins_{hist_nid}") else "40")
+        rng_min = (str(dpg.get_value(f"txt_range_min_{hist_nid}"))
+                   if dpg.does_item_exist(f"txt_range_min_{hist_nid}") else "0.0")
+        rng_max = (str(dpg.get_value(f"txt_range_max_{hist_nid}"))
+                   if dpg.does_item_exist(f"txt_range_max_{hist_nid}") else "150.0")
+        h5_full = hashlib.md5(
+            (h5_sel + observable + bins + rng_min + rng_max + target).encode()
+        ).hexdigest()
+        node_name = REGISTRY.node_names.get(hist_nid, "")
+        histograms.append({
+            "observable": observable,
+            "bins": bins, "min": rng_min, "max": rng_max,
+            "target": target, "h5": h5_full,
+            "node_name": node_name,
+        })
+
+    first = histograms[0] if histograms else {
+        "observable": "met.pt", "bins": "40", "min": "0.0", "max": "150.0",
+        "target": "None", "h5": hashlib.md5(h5_sel.encode()).hexdigest(),
+    }
 
     return {
         "energy": energy, "detector": detector,
-        "observable": observable,
-        "bins": bins, "min": rng_min, "max": rng_max,
-        "target": target, "h5": h5, "h5_sel": h5_sel,
+        "observable": first["observable"],
+        "bins": first["bins"], "min": first["min"], "max": first["max"],
+        "target": first["target"], "h5": first["h5"], "h5_sel": h5_sel,
         "mult_cuts": mult_cuts, "sel_exprs": sel_exprs,
+        "histograms": histograms,
     }
 
 
@@ -613,18 +757,49 @@ def _slot_id(tag: str):
 
 
 def check_pipeline_connectivity() -> list[int]:
-    """Return node ids that are not properly connected in the pipeline."""
-    connected_starts = set(REGISTRY.connections.keys())
-    connected_ends   = set(REGISTRY.connections.values())
+    """Return node ids that are not properly connected in the pipeline.
+
+    Rules:
+    - DataSource: output must be connected (starts the main chain).
+    - Multiplicity/Selection: both input and output must be connected
+      (form the DS->Mul->Sel cut chain). Selection output is OPTIONAL
+      because Observables receive their data from the global selection,
+      not from an explicit graph link.
+    - Observable: output must be connected (to a Histogram). Input from
+      Selection is optional and decorative — Observables apply the global
+      selection automatically.
+    - Histogram: input must be connected (from an Observable).
+    """
+    connected_starts = {s for s, _ in REGISTRY.links.values()}
+    connected_ends   = {e for _, e in REGISTRY.links.values()}
     error_nids = []
 
     for nid, ntype in REGISTRY.nodes.items():
-        if ntype != "Histogram":
+        if ntype == "DataSource":
             sid = _slot_id(f"slot_out_{nid}")
             if sid is None or sid not in connected_starts:
                 error_nids.append(nid)
 
-        if ntype != "DataSource":
+        elif ntype == "Multiplicity":
+            for slot_tag in (f"slot_out_{nid}", f"slot_in_{nid}"):
+                sid = _slot_id(slot_tag)
+                pool = connected_starts if "out" in slot_tag else connected_ends
+                if sid is None or sid not in pool:
+                    error_nids.append(nid)
+
+        elif ntype == "Selection":
+            # Must have input (part of chain); output to Observable is optional
+            sid = _slot_id(f"slot_in_{nid}")
+            if sid is None or sid not in connected_ends:
+                error_nids.append(nid)
+
+        elif ntype == "Observable":
+            # Must have output to a Histogram; input from Selection is optional
+            sid = _slot_id(f"slot_out_{nid}")
+            if sid is None or sid not in connected_starts:
+                error_nids.append(nid)
+
+        elif ntype == "Histogram":
             sid = _slot_id(f"slot_in_{nid}")
             if sid is None or sid not in connected_ends:
                 error_nids.append(nid)

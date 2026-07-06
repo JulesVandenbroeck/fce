@@ -13,14 +13,24 @@ plt.style.use(hep.style.ROOT)
 
 
 def render_plots(cfg, samples, en):
-    detector = cfg["detector"]
-    observable_target = cfg["observable"]
+    detector   = cfg["detector"]
+    histograms = cfg.get("histograms", [{
+        "observable": cfg["observable"],
+        "bins": cfg["bins"], "min": cfg["min"], "max": cfg["max"],
+        "target": cfg["target"], "h5": cfg["h5"],
+    }])
 
+    for i, hcfg in enumerate(histograms):
+        _render_single(cfg, samples, en, i, hcfg, detector)
+
+
+def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
+    observable_target = hcfg["observable"]
     h_mc, s_mc, h_data = [], [], None
 
     if en in samples:
         for s in samples[en].keys():
-            root_out = os.path.join(hdir, "output", f"{s}.root")
+            root_out = os.path.join(hdir, "output", f"hist{hist_idx}_{s}.root")
             if not os.path.exists(root_out):
                 continue
             try:
@@ -71,5 +81,6 @@ def render_plots(cfg, samples, en):
     ax.legend(loc="upper right", frameon=True, fontsize=12)
 
     fig.tight_layout(pad=1.5)
-    plt.savefig(os.path.join(hdir, "hist.png"), dpi=200, bbox_inches="tight", pad_inches=0.15)
+    plt.savefig(os.path.join(hdir, f"hist_{hist_idx}.png"),
+                dpi=200, bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
