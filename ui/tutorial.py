@@ -10,6 +10,8 @@ _PAGE = [0]
 
 # (title, body_text, highlight_tag_or_None, highlight_type)
 # highlight_type: "node" | "item" | "window" | None
+# All text uses ASCII only: DPG's default glyph range is Latin-1 (0x00-0xFF),
+# so characters above U+00FF (bullets, arrows, Greek, em-dash) render as "?".
 _PAGES = [
     (
         "Welcome to FCE Studio",
@@ -24,8 +26,8 @@ _PAGES = [
     (
         "Data Node",
         "The Data node is the starting point of every analysis pipeline.\n\n"
-        "  •  Energy: centre-of-mass energy (91 / 160 / 240 / 365 GeV)\n"
-        "  •  Detector: detector geometry (IDEA or CLD)\n\n"
+        "  -  Energy: centre-of-mass energy (91 / 160 / 240 / 365 GeV)\n"
+        "  -  Detector: detector geometry (IDEA or CLD)\n\n"
         "Exactly one Data node is allowed per pipeline. The selected energy\n"
         "determines which signal samples are available for statistical fitting.",
         "node_0", "node",
@@ -33,9 +35,9 @@ _PAGES = [
     (
         "Multiplicity Node",
         "The Multiplicity node filters events by minimum object counts.\n\n"
-        "  •  Lepton type: Any, Electron, or Muon\n"
-        "  •  Min Leptons / Jets / Photons: minimum required count\n\n"
-        "Multiple Multiplicity nodes can be chained — all conditions are\n"
+        "  -  Lepton type: Any, Electron, or Muon\n"
+        "  -  Min Leptons / Jets / Photons: minimum required count\n\n"
+        "Multiple Multiplicity nodes can be chained - all conditions are\n"
         "combined with AND logic. Setting all counts to 0 accepts every event.",
         "node_1", "node",
     ),
@@ -46,7 +48,7 @@ _PAGES = [
         "  nlep >= 2                      at least 2 leptons\n"
         "  l1.pt > 20 and l2.pt > 10\n"
         "  (l1.p4 + l2.p4).mass > 80     di-lepton mass cut\n\n"
-        "Press ‘?’ inside the node for the full variable reference. Multiple\n"
+        "Press '?' inside the node for the full variable reference. Multiple\n"
         "Selection nodes can be chained (AND logic).",
         "node_2", "node",
     ),
@@ -64,23 +66,23 @@ _PAGES = [
     (
         "Histogram Node",
         "The Histogram node controls how the observable is plotted.\n\n"
-        "  •  Bins: number of histogram bins\n"
-        "  •  Min / Max Range: the x-axis range of the histogram\n"
-        "  •  Fit Signal: optional signal sample for a statistical fit\n"
-        "     (returns signal strength μ and discovery significance Z)\n\n"
+        "  -  Bins: number of histogram bins\n"
+        "  -  Min / Max Range: the x-axis range of the histogram\n"
+        "  -  Fit Signal: optional signal sample for a statistical fit\n"
+        "     (returns signal strength mu and discovery significance Z)\n\n"
         "Multiple Histogram nodes can share one Observable, each producing\n"
-        "a separate plot labelled by the node’s custom name.",
+        "a separate plot labelled by the node's custom name.",
         "node_4", "node",
     ),
     (
         "Connecting Nodes",
         "Connect nodes by dragging from an output pin to an input pin.\n\n"
-        "Pipeline order:  Data → Multiplicity → Selection → Observable → Histogram\n\n"
-        "  •  Create a link: drag from the right-hand pin of one node to\n"
+        "Pipeline order:  Data -> Multiplicity -> Selection -> Observable -> Histogram\n\n"
+        "  -  Create a link: drag from the right-hand pin of one node to\n"
         "     the left-hand pin of the next.\n"
-        "  •  Delete a link: select it and press Delete / Backspace, or\n"
+        "  -  Delete a link: select it and press Delete / Backspace, or\n"
         "     right-click the link to remove it immediately.\n"
-        "  •  Undo: Ctrl Z restores the last node or link deletion (up to 10).",
+        "  -  Undo: Ctrl Z restores the last node or link deletion (up to 10).",
         None, None,
     ),
     (
@@ -95,12 +97,12 @@ _PAGES = [
     (
         "Canvas Navigation",
         "Navigate and organise the canvas with these controls:\n\n"
-        "  •  Right-click + drag: pan all nodes\n"
-        "  •  Scroll wheel: pan vertically\n"
-        "  •  Shift + Scroll: pan horizontally\n"
-        "  •  Drag a node header: move a single node\n"
-        "  •  Select a node or link, then Delete / Backspace: remove it\n"
-        "  •  × button on a node: delete that node",
+        "  -  Right-click + drag: pan all nodes\n"
+        "  -  Scroll wheel: pan vertically\n"
+        "  -  Shift + Scroll: pan horizontally\n"
+        "  -  Drag a node header: move a single node\n"
+        "  -  Select a node or link, then Delete / Backspace: remove it\n"
+        "  -  x button on a node: delete that node",
         None, None,
     ),
     (
@@ -108,21 +110,21 @@ _PAGES = [
         "When your pipeline is fully connected, press Run to start.\n\n"
         "FCE Studio reads the ROOT data files, applies your selection cuts,\n"
         "and fills histograms for all configured samples. A progress bar\n"
-        "tracks execution. Results are cached — re-running with the same\n"
+        "tracks execution. Results are cached - re-running with the same\n"
         "settings is significantly faster.\n\n"
         "If a node has a configuration error it is highlighted in red;\n"
-        "click the ‘!’ button on the node to see the error details.",
+        "click the '!' button on the node to see the error details.",
         "btn_trigger", "item",
     ),
     (
         "Results & Statistical Fit",
         "After the analysis completes, histograms appear on the right.\n\n"
-        "  •  Single Histogram node: the plot fills the display area.\n"
-        "  •  Multiple Histogram nodes: each plot appears in a collapsing\n"
-        "     section labelled by the node’s custom name.\n\n"
+        "  -  Single Histogram node: the plot fills the display area.\n"
+        "  -  Multiple Histogram nodes: each plot appears in a collapsing\n"
+        "     section labelled by the node's custom name.\n\n"
         "If a Fit Signal is selected, FCE Studio runs a pyhf-based fit and\n"
-        "reports signal strength μ and discovery significance Z in the\n"
-        "‘Statistical fit’ panel above the histogram.",
+        "reports signal strength mu and discovery significance Z in the\n"
+        "'Statistical fit' panel above the histogram.",
         "stat_fit_header", "item",
     ),
 ]
@@ -198,7 +200,7 @@ def _refresh():
     dpg.set_value("_tut_pager", f"{idx + 1} / {total}")
     dpg.configure_item("_tut_prev", enabled=(idx > 0))
     last = idx == total - 1
-    dpg.configure_item("_tut_next", label="Finish" if last else "Next  ›")
+    dpg.configure_item("_tut_next", label="Finish" if last else "Next >")
 
     if h_tag:
         _apply_highlight(h_tag, h_type)
@@ -228,10 +230,11 @@ def _on_skip(s=None, a=None, u=None):
 
 
 def _build_window():
+    # modal=False so the interface is not dimmed while items are highlighted
     with dpg.window(
         tag=_WIN_TAG,
-        label="FCE Studio  —  Tutorial",
-        modal=True, show=False,
+        label="FCE Studio - Tutorial",
+        modal=False, show=False,
         width=_WIN_W, height=_WIN_H,
         no_resize=True, no_collapse=True,
         on_close=_on_skip,
@@ -246,7 +249,7 @@ def _build_window():
         dpg.add_separator()
         dpg.add_spacer(height=6)
         with dpg.group(horizontal=True):
-            dpg.add_button(label="‹ Prev", tag="_tut_prev",
+            dpg.add_button(label="< Prev", tag="_tut_prev",
                            callback=_on_prev, width=90)
             dpg.add_spacer(width=8)
             dpg.add_button(label="Skip", tag="_tut_skip",
@@ -254,7 +257,7 @@ def _build_window():
             dpg.add_spacer(width=102)
             dpg.add_text("1 / 11", tag="_tut_pager")
             dpg.add_spacer(width=102)
-            dpg.add_button(label="Next  ›", tag="_tut_next",
+            dpg.add_button(label="Next >", tag="_tut_next",
                            callback=_on_next, width=90)
 
 
