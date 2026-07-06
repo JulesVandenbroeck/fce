@@ -874,6 +874,27 @@ def create_node(node_type: str, pos: list | None = None, name: str | None = None
 
 
 # ---------------------------------------------------------------------------
+# Node palette drag-and-drop drop handler
+# ---------------------------------------------------------------------------
+
+def on_node_editor_drop(sender, app_data, user_data):
+    """Create a node at the drop position using screen-to-pane coordinate mapping.
+
+    dpg.get_item_pos reads state['pos'] which for child_window items returns
+    the screen-space position (unlike rect_min, which is only populated for
+    non-container ImGui items).
+    """
+    node_type = app_data
+    if not node_type or not isinstance(node_type, str):
+        return
+    screen = dpg.get_mouse_pos(local=False)
+    origin = dpg.get_item_pos("node_editor_pane")
+    x = max(10, int(screen[0] - origin[0]))
+    y = max(10, int(screen[1] - origin[1]))
+    create_node(node_type, pos=[x, y])
+
+
+# ---------------------------------------------------------------------------
 # Graph topology compiler
 # ---------------------------------------------------------------------------
 
