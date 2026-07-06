@@ -94,6 +94,14 @@ Available in Selection and Observable nodes:
 - `ui/state.py:RUN_STATE` -- thread-safe dict: `progress`, `running`, `stop`, `status_msg`, `fit_mu`, `fit_sig`.
 - FCE home directory (`~/.fce` or temp fallback): stores `cache/`, `output/`, `datasets/`.
 
+## UI interactions
+
+- **Canvas navigation**: Right-click + drag pans all nodes. Scroll wheel pans vertically (Shift+scroll pans horizontally).
+- **Node/link deletion**: Select a node or link, then press Backspace or Delete. Blocked while any input field is active. The × button in the node name row also deletes.
+- **Undo (Ctrl+Z)**: Restores the last deleted node or link. History depth is 10. Node undo also restores connected links and all widget values.
+- **Right-click on a link**: Deletes the hovered link (short click, < 5 px movement).
+- **Initial nodes**: Created pre-connected (DataSource → Multiplicity → Selection → Observable → Histogram) with named labels. `create_node()` accepts an optional `name` parameter.
+
 ## Testing approach
 
 The UI layer (`fce.py`, `ui/graph.py`, `ui/components.py`) requires a DPG display and cannot be tested headlessly. All other modules are headless-safe:
