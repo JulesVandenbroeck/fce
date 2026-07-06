@@ -143,6 +143,9 @@ def _on_right_click_link(sender=None, app_data=None, user_data=None):
 
 _PAN_SPEED = 20  # pixels per scroll notch
 
+_PAN_ACTIVE = False
+_PAN_LAST   = [0.0, 0.0]
+
 
 def _on_wheel_pan(sender=None, app_data=None, user_data=None):
     """Pan the node editor canvas with the mouse wheel."""
@@ -161,6 +164,60 @@ def _on_wheel_pan(sender=None, app_data=None, user_data=None):
             dpg.set_item_pos(node_tag, [x + dx, y + dy])
 
 
+def _on_canvas_mouse_down(sender=None, app_data=None, user_data=None):
+    """Start drag-pan when the user clicks on empty canvas space."""
+    global _PAN_ACTIVE
+    if app_data != 0:  # left button only
+        return
+    if not dpg.does_item_exist("node_editor_container"):
+        return
+    if not dpg.is_item_hovered("node_editor_container"):
+        return
+    for nid in REGISTRY.nodes:
+        if dpg.does_item_exist(f"node_{nid}") and dpg.is_item_hovered(f"node_{nid}"):
+            return
+    _PAN_ACTIVE = True
+    pos = dpg.get_mouse_pos(local=False)
+    _PAN_LAST[0], _PAN_LAST[1] = pos[0], pos[1]
+
+
+def _on_canvas_mouse_release(sender=None, app_data=None, user_data=None):
+    global _PAN_ACTIVE  # noqa: F824
+    if app_data == 0:
+        _PAN_ACTIVE = False
+
+
+def _on_canvas_mouse_move(sender=None, app_data=None, user_data=None):
+    """Translate all nodes while left-button drag-pan is active."""
+    if not _PAN_ACTIVE:
+        return
+    pos = dpg.get_mouse_pos(local=False)
+    dx = pos[0] - _PAN_LAST[0]
+    dy = pos[1] - _PAN_LAST[1]
+    _PAN_LAST[0], _PAN_LAST[1] = pos[0], pos[1]
+    for nid in list(REGISTRY.nodes.keys()):
+        node_tag = f"node_{nid}"
+        if dpg.does_item_exist(node_tag):
+            x, y = dpg.get_item_pos(node_tag)
+            dpg.set_item_pos(node_tag, [x + dx, y + dy])
+
+
+def _on_key_delete(sender=None, app_data=None, user_data=None):
+    """Delete selected nodes and links when Backspace or Delete is pressed."""
+    if not dpg.does_item_exist("node_editor_container"):
+        return
+    for dpg_id in list(dpg.get_selected_nodes("node_editor_container")):
+        for nid in list(REGISTRY.nodes.keys()):
+            try:
+                if dpg.does_item_exist(f"node_{nid}") and dpg.get_alias_id(f"node_{nid}") == dpg_id:
+                    delete_node(nid)
+                    break
+            except Exception:
+                pass
+    for link_id in list(dpg.get_selected_links("node_editor_container")):
+        delink_callback(None, link_id)
+
+
 def setup_link_handlers():
     with dpg.handler_registry():
         dpg.add_mouse_click_handler(
@@ -168,6 +225,17 @@ def setup_link_handlers():
             callback=_on_right_click_link,
         )
         dpg.add_mouse_wheel_handler(callback=_on_wheel_pan)
+        dpg.add_mouse_down_handler(
+            button=dpg.mvMouseButton_Left,
+            callback=_on_canvas_mouse_down,
+        )
+        dpg.add_mouse_release_handler(
+            button=dpg.mvMouseButton_Left,
+            callback=_on_canvas_mouse_release,
+        )
+        dpg.add_mouse_move_handler(callback=_on_canvas_mouse_move)
+        dpg.add_key_press_handler(key=dpg.mvKey_Back,   callback=_on_key_delete)
+        dpg.add_key_press_handler(key=dpg.mvKey_Delete, callback=_on_key_delete)
 
 
 # ---------------------------------------------------------------------------
@@ -532,19 +600,19 @@ def _show_help_window(sender=None, app_data=None, user_data=None):
     dpg.focus_item("help_expr_window")
 
 
-# Spacer width to align × (and ? for expr nodes) to the right edge
-_CLOSE_SPACER = {
-    "DataSource":   162,
-    "Multiplicity": 122,
-    "Selection":    180,   # reduced: ? button takes ~25px
-    "Observable":   160,   # reduced: ? button takes ~25px
-    "Histogram":    158,
+# Spacer between the name/edit area and the right-side control buttons (×, ?, !)
+_NAME_BTN_SPACER = {
+    "DataSource":   115,
+    "Multiplicity":  75,
+    "Selection":    115,
+    "Observable":    88,
+    "Histogram":    100,
 }
 
 _HAS_HELP = {"Selection", "Observable"}
 
 
-def create_node(node_type: str, pos: list | None = None):
+def create_node(node_type: str, pos: list | None = None, name: str | None = None):
     # Prevent more than one DataSource
     if node_type == "DataSource":
         if any(t == "DataSource" for t in REGISTRY.nodes.values()):
@@ -568,8 +636,10 @@ def create_node(node_type: str, pos: list | None = None):
         pos=pos,
     )
 
-    # ── Name row — editable node label ───────────────────────────────────
-    default_name = NODE_LABELS.get(node_type, node_type)
+    # ── Name row — editable label + close/help buttons at the right ──────
+    display_name = name if name else NODE_LABELS.get(node_type, node_type)
+    if name:
+        REGISTRY.node_names[nid] = name
     name_attr = f"slot_name_{nid}"
     dpg.add_node_attribute(
         attribute_type=dpg.mvNode_Attr_Static,
@@ -577,7 +647,7 @@ def create_node(node_type: str, pos: list | None = None):
     )
     name_grp = f"grp_name_{nid}"
     dpg.add_group(horizontal=True, tag=name_grp, parent=name_attr)
-    dpg.add_text(default_name, tag=f"lbl_name_{nid}", parent=name_grp)
+    dpg.add_text(display_name, tag=f"lbl_name_{nid}", parent=name_grp)
     dpg.add_button(
         label=_ICON_EDIT, tag=f"btn_name_{nid}", small=True,
         callback=_on_name_edit_click,
@@ -599,32 +669,25 @@ def create_node(node_type: str, pos: list | None = None):
         )
     dpg.bind_item_handler_registry(f"txt_name_{nid}", f"name_handler_{nid}")
 
-    # ── Close (×) row — with optional ? button for expr nodes ────────────
-    close_attr = f"slot_close_{nid}"
-    dpg.add_node_attribute(
-        attribute_type=dpg.mvNode_Attr_Static,
-        tag=close_attr, parent=node_tag,
-    )
-    close_grp = f"grp_close_{nid}"
-    dpg.add_group(horizontal=True, tag=close_grp, parent=close_attr)
-    dpg.add_spacer(width=_CLOSE_SPACER.get(node_type, 150), parent=close_grp)
+    # Spacer pushes ×/? buttons toward the right edge of the node
+    dpg.add_spacer(width=_NAME_BTN_SPACER.get(node_type, 90), parent=name_grp)
 
     if node_type in _HAS_HELP:
         dpg.add_button(
             label="!", tag=f"btn_bang_{nid}", small=True, show=False,
             callback=_show_node_error,
-            user_data=nid, parent=close_grp,
+            user_data=nid, parent=name_grp,
         )
         dpg.add_button(
             label="?", tag=f"btn_help_{nid}", small=True,
             callback=_show_help_window,
-            parent=close_grp,
+            parent=name_grp,
         )
 
     dpg.add_button(
         label="×", tag=f"btn_close_{nid}", small=True,
         callback=lambda s, a, u: delete_node(u),
-        user_data=nid, parent=close_grp,
+        user_data=nid, parent=name_grp,
     )
 
     # ── Input slot ───────────────────────────────────────────────────────

@@ -298,11 +298,11 @@ if _large_font is not None:
     dpg.bind_item_font("btn_trigger", _large_font)
 
 # ── Create initial nodes ──────────────────────────────────────────────────────
-create_node("DataSource",   pos=[50,  50])
-create_node("Multiplicity", pos=[360, 50])
-create_node("Selection",    pos=[50,  290])
-create_node("Observable",   pos=[360, 290])
-create_node("Histogram",    pos=[200, 530])
+create_node("DataSource",   pos=[30,  80], name="IDEA 91 GeV data")
+create_node("Multiplicity", pos=[290, 80], name="all events")
+create_node("Selection",    pos=[560, 80], name="2 leptons")
+create_node("Observable",   pos=[870, 80], name="MET pT")
+create_node("Histogram",    pos=[1160, 80], name="MET pT")
 
 setup_link_handlers()
 
