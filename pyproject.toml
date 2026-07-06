@@ -28,6 +28,8 @@ dependencies = [
     "pillow>=10",
     "pyhf>=0.7",
     "scipy>=1.11",
+    "pytest>=9.1",
+    "flake8>=7.3",
 ]
 
 [project.scripts]
