@@ -253,14 +253,29 @@ def mark_nodes_from_pipeline_check(error_nids: list[int], all_nids: list[int]):
         if nid in error_nids:
             ntype = REGISTRY.nodes.get(nid, "")
             parts = []
-            if ntype != "Histogram":
+            if ntype == "DataSource":
                 sid = _slot_id(f"slot_out_{nid}")
                 if sid is None or sid not in connected_starts:
                     parts.append("output not connected")
-            if ntype != "DataSource":
+            elif ntype == "Multiplicity":
+                sid = _slot_id(f"slot_out_{nid}")
+                if sid is None or sid not in connected_starts:
+                    parts.append("output not connected")
                 sid = _slot_id(f"slot_in_{nid}")
                 if sid is None or sid not in connected_ends:
                     parts.append("input not connected")
+            elif ntype == "Selection":
+                sid = _slot_id(f"slot_in_{nid}")
+                if sid is None or sid not in connected_ends:
+                    parts.append("input not connected")
+            elif ntype == "Observable":
+                sid = _slot_id(f"slot_out_{nid}")
+                if sid is None or sid not in connected_starts:
+                    parts.append("output not connected (connect to a Histogram)")
+            elif ntype == "Histogram":
+                sid = _slot_id(f"slot_in_{nid}")
+                if sid is None or sid not in connected_ends:
+                    parts.append("input not connected (connect from an Observable)")
             _set_node_error(nid, True, "Pipeline: " + (", ".join(parts) or "not connected"))
         else:
             _set_node_error(nid, False)
@@ -643,18 +658,49 @@ def _slot_id(tag: str):
 
 
 def check_pipeline_connectivity() -> list[int]:
-    """Return node ids that are not properly connected in the pipeline."""
+    """Return node ids that are not properly connected in the pipeline.
+
+    Rules:
+    - DataSource: output must be connected (starts the main chain).
+    - Multiplicity/Selection: both input and output must be connected
+      (form the DS->Mul->Sel cut chain). Selection output is OPTIONAL
+      because Observables receive their data from the global selection,
+      not from an explicit graph link.
+    - Observable: output must be connected (to a Histogram). Input from
+      Selection is optional and decorative — Observables apply the global
+      selection automatically.
+    - Histogram: input must be connected (from an Observable).
+    """
     connected_starts = {s for s, _ in REGISTRY.links.values()}
     connected_ends   = {e for _, e in REGISTRY.links.values()}
     error_nids = []
 
     for nid, ntype in REGISTRY.nodes.items():
-        if ntype != "Histogram":
+        if ntype == "DataSource":
             sid = _slot_id(f"slot_out_{nid}")
             if sid is None or sid not in connected_starts:
                 error_nids.append(nid)
 
-        if ntype != "DataSource":
+        elif ntype == "Multiplicity":
+            for slot_tag in (f"slot_out_{nid}", f"slot_in_{nid}"):
+                sid = _slot_id(slot_tag)
+                pool = connected_starts if "out" in slot_tag else connected_ends
+                if sid is None or sid not in pool:
+                    error_nids.append(nid)
+
+        elif ntype == "Selection":
+            # Must have input (part of chain); output to Observable is optional
+            sid = _slot_id(f"slot_in_{nid}")
+            if sid is None or sid not in connected_ends:
+                error_nids.append(nid)
+
+        elif ntype == "Observable":
+            # Must have output to a Histogram; input from Selection is optional
+            sid = _slot_id(f"slot_out_{nid}")
+            if sid is None or sid not in connected_starts:
+                error_nids.append(nid)
+
+        elif ntype == "Histogram":
             sid = _slot_id(f"slot_in_{nid}")
             if sid is None or sid not in connected_ends:
                 error_nids.append(nid)
