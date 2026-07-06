@@ -1,5 +1,6 @@
 import re
 import dearpygui.dearpygui as dpg
+import ui.state as _state
 from ui.state import REGISTRY, NODE_HIERARCHY, NODE_LABELS
 
 # ---------------------------------------------------------------------------
@@ -462,8 +463,8 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
 # Node name editing
 # ---------------------------------------------------------------------------
 
-_ICON_EDIT = "✍"       # writing hand -- shown when node is in view mode
-_ICON_SAVE = "💾"   # floppy disk  -- shown when node is in edit mode
+_ICON_EDIT = "✏"  # ✏ PENCIL       -- shown when node is in view mode
+_ICON_SAVE = "✔"  # ✔ HEAVY CHECK  -- shown when node is in edit mode
 
 
 def _save_node_name(nid: int):
@@ -582,6 +583,8 @@ def create_node(node_type: str, pos: list | None = None):
         callback=_on_name_edit_click,
         user_data=nid, parent=name_grp,
     )
+    if _state.EXTENDED_FONT is not None:
+        dpg.bind_item_font(f"btn_name_{nid}", _state.EXTENDED_FONT)
     dpg.add_input_text(
         tag=f"txt_name_{nid}", width=110, show=False,
         hint="custom name", on_enter=True,

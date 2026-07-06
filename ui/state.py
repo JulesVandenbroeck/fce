@@ -41,6 +41,8 @@ class NodeRegistry:
 
 REGISTRY = NodeRegistry()
 
+EXTENDED_FONT = None  # Set by fce.py; used for Dingbats icon rendering in node buttons
+
 
 def update_run_state(key, value):
     with STATE_LOCK:
