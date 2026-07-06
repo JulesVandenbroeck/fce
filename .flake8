@@ -1,0 +1,18 @@
+[flake8]
+max-line-length = 120
+# Alignment style (E221/E222/E272/E127): deliberate in physics loop code
+# E402: imports-not-at-top: deliberate in fce.py (must call configure_cache_env
+#        before importing dearpygui) and in test files (sys.path setup first)
+# W503/W504: line-break operator position -- style choice
+extend-ignore = E221, E222, E272, E127, E402, W503, W504
+# E701/E702: multiple statements on one line -- used deliberately in inner loops
+per-file-ignores =
+    engine/path_filter.py:E701,E702
+    engine/analytical_loop.py:E701,E702
+exclude =
+    .git,
+    __pycache__,
+    *.egg-info,
+    build,
+    dist,
+    .github,

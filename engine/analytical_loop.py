@@ -1,7 +1,6 @@
 import os
 import gc
 import shutil
-import numpy as np
 import uproot
 import boost_histogram as bh
 
