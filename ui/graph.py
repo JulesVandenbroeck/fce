@@ -372,6 +372,7 @@ def delete_node(nid: int):
             del REGISTRY.slot_node[k]
 
     REGISTRY.nodes.pop(nid, None)
+    REGISTRY.node_names.pop(nid, None)
 
     node_tag = f"node_{nid}"
     if dpg.does_item_exist(node_tag):
@@ -454,6 +455,41 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
 
 
 # ---------------------------------------------------------------------------
+# Node name editing
+# ---------------------------------------------------------------------------
+
+def _on_name_edit_click(sender, app_data, user_data):
+    """Toggle the inline name input when the pencil button is clicked."""
+    nid = user_data
+    edit_tag  = f"txt_name_{nid}"
+    label_tag = f"lbl_name_{nid}"
+    if not dpg.does_item_exist(edit_tag):
+        return
+    is_visible = dpg.is_item_visible(edit_tag)
+    if not is_visible:
+        dpg.set_value(edit_tag, REGISTRY.node_names.get(nid, ""))
+    dpg.configure_item(edit_tag,  show=not is_visible)
+    dpg.configure_item(label_tag, show=is_visible)
+    if not is_visible:
+        dpg.focus_item(edit_tag)
+
+
+def _on_name_changed(sender, app_data, user_data):
+    """Persist the custom name, update label text, and hide the input field."""
+    nid = user_data
+    new_name = app_data.strip()
+    REGISTRY.node_names[nid] = new_name
+    label_tag = f"lbl_name_{nid}"
+    if dpg.does_item_exist(label_tag):
+        display = new_name if new_name else NODE_LABELS.get(REGISTRY.nodes.get(nid, ""), "")
+        dpg.set_value(label_tag, display)
+        dpg.configure_item(label_tag, show=True)
+    edit_tag = f"txt_name_{nid}"
+    if dpg.does_item_exist(edit_tag):
+        dpg.configure_item(edit_tag, show=False)
+
+
+# ---------------------------------------------------------------------------
 # Help window show
 # ---------------------------------------------------------------------------
 
@@ -500,6 +536,28 @@ def create_node(node_type: str, pos: list | None = None):
         tag=node_tag,
         parent="node_editor_container",
         pos=pos,
+    )
+
+    # ── Name row — editable node label ───────────────────────────────────
+    default_name = NODE_LABELS.get(node_type, node_type)
+    name_attr = f"slot_name_{nid}"
+    dpg.add_node_attribute(
+        attribute_type=dpg.mvNode_Attr_Static,
+        tag=name_attr, parent=node_tag,
+    )
+    name_grp = f"grp_name_{nid}"
+    dpg.add_group(horizontal=True, tag=name_grp, parent=name_attr)
+    dpg.add_text(default_name, tag=f"lbl_name_{nid}", parent=name_grp)
+    dpg.add_button(
+        label="e", tag=f"btn_name_{nid}", small=True,
+        callback=_on_name_edit_click,
+        user_data=nid, parent=name_grp,
+    )
+    dpg.add_input_text(
+        tag=f"txt_name_{nid}", width=110, show=False,
+        hint="custom name", on_enter=True,
+        callback=_on_name_changed,
+        user_data=nid, parent=name_grp,
     )
 
     # ── Close (×) row — with optional ? button for expr nodes ────────────
@@ -624,10 +682,12 @@ def compile_graph_topology() -> dict:
         h5_full = hashlib.md5(
             (h5_sel + observable + bins + rng_min + rng_max + target).encode()
         ).hexdigest()
+        node_name = REGISTRY.node_names.get(hist_nid, "")
         histograms.append({
             "observable": observable,
             "bins": bins, "min": rng_min, "max": rng_max,
             "target": target, "h5": h5_full,
+            "node_name": node_name,
         })
 
     first = histograms[0] if histograms else {

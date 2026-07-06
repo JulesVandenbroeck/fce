@@ -186,10 +186,14 @@ def trigger_analysis_pipeline():
 
     cfg = compile_graph_topology()
 
-    # Store histogram count for display after run
+    # Store histogram count and labels for display after run
     histograms = cfg.get("histograms", [])
     _frame_poll_callback._last_n_hist = max(1, len(histograms))
-    _frame_poll_callback._last_hist_labels = None  # Feature 2 (node naming) will populate this
+    hist_labels = []
+    for i, hcfg in enumerate(histograms):
+        name = hcfg.get("node_name", "").strip()
+        hist_labels.append(name if name else f"Histogram {i + 1}")
+    _frame_poll_callback._last_hist_labels = hist_labels
 
     dpg.configure_item("btn_trigger", label="Stop (Processing..)", enabled=True)
 
