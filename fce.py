@@ -234,7 +234,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
     with dpg.group(horizontal=True):
 
         # Left: node editor (leaves room for palette at bottom)
-        with dpg.child_window(width=-670, height=-75, border=False,
+        with dpg.child_window(width=-670, height=-95, border=False,
                               tag="node_editor_pane",
                               drop_callback=on_node_editor_drop):
             with dpg.node_editor(
@@ -247,7 +247,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 pass
 
         # Right: controls + plot + console
-        with dpg.child_window(width=660, height=-75, border=False):
+        with dpg.child_window(width=660, height=-95, border=False):
 
             dpg.add_spacer(height=22)
             dpg.add_progress_bar(
@@ -297,29 +297,21 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 )
 
     # ── Node palette (bottom bar) — must be inside the primary window ─────
-    with dpg.child_window(width=-1, height=68, border=True,
+    with dpg.child_window(width=-1, height=90, border=True,
                           tag="node_palette_bar"):
-        dpg.add_spacer(height=4)
-        with dpg.group(horizontal=True):
-            dpg.add_spacer(width=8)
-            dpg.add_text("Drag to canvas ›")
-            dpg.add_spacer(width=12)
-            for _pt, _plabel, _ptooltip in [
-                ("Multiplicity", "Multiplicity",
-                 "Filter by minimum object counts\n(leptons, jets, photons)"),
-                ("Selection",    "Selection",
-                 "Filter events with a boolean expression\n(e.g.  nlep >= 2)"),
-                ("Observable",   "Observable",
-                 "Physics quantity to histogram\n(e.g.  met.pt  or  (l1.p4+l2.p4).mass)"),
-                ("Histogram",    "Histogram",
-                 "Plot histogram\n(bins, range, optional fit signal)"),
+        dpg.add_text("Drag to canvas ›", tag="palette_drag_text", indent=0)
+        dpg.add_spacer(height=2)
+        with dpg.group(horizontal=True, tag="palette_btn_group"):
+            for _pt, _plabel in [
+                ("Multiplicity", "Multiplicity"),
+                ("Selection",    "Selection"),
+                ("Observable",   "Observable"),
+                ("Histogram",    "Histogram"),
             ]:
-                _pbtn = dpg.add_button(label=_plabel, width=160, height=40)
+                _pbtn = dpg.add_button(label=_plabel, width=160, height=44)
                 with dpg.drag_payload(parent=_pbtn, drag_data=_pt,
                                       label=f"  + {_plabel}  "):
                     pass
-                with dpg.tooltip(parent=_pbtn):
-                    dpg.add_text(_ptooltip)
                 dpg.add_spacer(width=8)
 
 # ── Bind large font to Run button ─────────────────────────────────────────────
@@ -346,6 +338,17 @@ for _out_nid, _in_nid in [(0, 1), (1, 2), (2, 3), (3, 4)]:
         pass
 
 setup_link_handlers()
+
+
+def _center_palette():
+    """Center palette text and button group once the viewport width is known."""
+    vp_w = dpg.get_viewport_width()
+    # "Drag to canvas ›" ≈ 120 px; buttons 4×160 + 4×8 spacers ≈ 672 px
+    dpg.configure_item("palette_drag_text", indent=max(0, (vp_w - 120) // 2))
+    dpg.configure_item("palette_btn_group", indent=max(0, (vp_w - 672) // 2))
+
+
+dpg.set_frame_callback(frame=1, callback=_center_palette)
 
 # ── Viewport ──────────────────────────────────────────────────────────────────
 dpg.create_viewport(
