@@ -21,6 +21,7 @@ from PIL import Image
 from ui.graph import link_callback, delink_callback, create_node, setup_link_handlers, on_node_editor_drop
 from ui.state import REGISTRY
 from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload, MAX_HIST_TEXTURES
+from ui.tutorial import show_tutorial
 import ui.state as _ui_state
 from fce_studio import __version__
 
@@ -94,6 +95,7 @@ with dpg.font_registry():
                 pass
 
 _ui_state.EXTENDED_FONT = _extended_font
+_ui_state.LARGE_FONT = _large_font
 
 # ── Help popup (expression guide) ─────────────────────────────────────────────
 with dpg.window(tag="help_expr_window", label="Expression Guide",
@@ -358,5 +360,6 @@ dpg.setup_dearpygui()
 dpg.show_viewport()
 dpg.set_primary_window("primary_studio_window", True)
 dpg.maximize_viewport()
+dpg.set_frame_callback(frame=1, callback=show_tutorial)
 dpg.start_dearpygui()
 dpg.destroy_context()

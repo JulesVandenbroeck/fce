@@ -42,6 +42,7 @@ class NodeRegistry:
 REGISTRY = NodeRegistry()
 
 EXTENDED_FONT = None  # Set by fce.py; used for Dingbats icon rendering in node buttons
+LARGE_FONT = None     # Set by fce.py; used for tutorial title and Run button
 
 
 def update_run_state(key, value):
