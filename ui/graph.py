@@ -1,4 +1,5 @@
 import re
+from collections import deque
 import dearpygui.dearpygui as dpg
 import ui.state as _state
 from ui.state import REGISTRY, NODE_HIERARCHY, NODE_LABELS
@@ -130,23 +131,25 @@ def delink_callback(sender, app_data):
 
 
 def _on_right_click_link(sender=None, app_data=None, user_data=None):
-    """Delete a link when it is right-clicked in the node editor."""
+    """Delete a link when it is right-clicked; push undo entry first."""
     if not dpg.does_item_exist("node_editor_container"):
         return
     if not dpg.is_item_hovered("node_editor_container"):
         return
     for link_id in list(REGISTRY.links.keys()):
         if dpg.does_item_exist(link_id) and dpg.is_item_hovered(link_id):
+            snap = _snapshot_link(link_id)
+            if snap:
+                _UNDO_HISTORY.append(snap)
             delink_callback(None, link_id)
             break
 
 
 _PAN_SPEED = 20  # pixels per scroll notch
 
-# Right-click drag-to-pan state
-_PAN_ACTIVE = False
-_PAN_LAST   = [0.0, 0.0]
-_PAN_START  = [0.0, 0.0]  # used to distinguish click vs drag for link deletion
+# Right-click drag-to-pan tracking (no boolean flag — check button state directly)
+_PAN_LAST  = [0.0, 0.0]
+_PAN_START = [0.0, 0.0]  # used to distinguish click vs drag for link deletion
 
 
 def _pan_all_nodes(dx: float, dy: float):
@@ -171,59 +174,191 @@ def _on_wheel_pan(sender=None, app_data=None, user_data=None):
 
 
 def _on_canvas_mouse_down(sender=None, app_data=None, user_data=None):
-    """Start right-click drag-pan on the empty canvas."""
-    global _PAN_ACTIVE
+    """Record the right-button press position for pan delta and click detection."""
     if app_data != 1:  # right button only
         return
-    if not dpg.does_item_exist("node_editor_container"):
-        return
-    if not dpg.is_item_hovered("node_editor_container"):
-        return
-    _PAN_ACTIVE = True
     pos = dpg.get_mouse_pos(local=False)
     _PAN_LAST[0], _PAN_LAST[1] = pos[0], pos[1]
     _PAN_START[0], _PAN_START[1] = pos[0], pos[1]
 
 
 def _on_canvas_mouse_release(sender=None, app_data=None, user_data=None):
-    """End right-click drag; treat as a click (link delete) if mouse barely moved."""
-    global _PAN_ACTIVE  # noqa: F824
+    """On right-button release: if mouse barely moved treat as click to delete link."""
     if app_data != 1:
         return
-    if _PAN_ACTIVE:
-        pos = dpg.get_mouse_pos(local=False)
-        dx = pos[0] - _PAN_START[0]
-        dy = pos[1] - _PAN_START[1]
-        if dx * dx + dy * dy < 25:  # < 5 px → treat as right-click
-            _on_right_click_link()
-        _PAN_ACTIVE = False
+    pos = dpg.get_mouse_pos(local=False)
+    dx = pos[0] - _PAN_START[0]
+    dy = pos[1] - _PAN_START[1]
+    if dx * dx + dy * dy < 25:  # < 5 px → right-click
+        _on_right_click_link()
 
 
 def _on_canvas_mouse_move(sender=None, app_data=None, user_data=None):
-    """Translate all nodes while right-button drag-pan is active."""
-    if not _PAN_ACTIVE:
+    """Translate all nodes while the right mouse button is held (drag-to-pan)."""
+    if not dpg.is_mouse_button_down(dpg.mvMouseButton_Right):
         return
     pos = dpg.get_mouse_pos(local=False)
     dx = pos[0] - _PAN_LAST[0]
     dy = pos[1] - _PAN_LAST[1]
     _PAN_LAST[0], _PAN_LAST[1] = pos[0], pos[1]
-    _pan_all_nodes(dx, dy)
+    if abs(dx) < 100 and abs(dy) < 100:  # guard against cursor jump on first frame
+        _pan_all_nodes(dx, dy)
+
+
+# ---------------------------------------------------------------------------
+# Undo history (max 10 entries)
+# ---------------------------------------------------------------------------
+
+_UNDO_HISTORY: deque = deque(maxlen=10)
+
+_WIDGET_PREFIXES = (
+    "cb_energy_", "cb_detector_",
+    "cb_ltype_", "txt_leptons_", "txt_jets_", "txt_photons_",
+    "txt_sel_", "txt_obs_",
+    "cb_target_", "txt_bins_", "txt_range_min_", "txt_range_max_",
+)
+
+_INPUT_PREFIXES = (
+    "txt_sel_", "txt_obs_", "txt_name_",
+    "txt_bins_", "txt_range_min_", "txt_range_max_",
+    "txt_leptons_", "txt_jets_", "txt_photons_",
+)
+
+
+def _any_input_active() -> bool:
+    """Return True if any text/number input field is currently being edited."""
+    for nid in REGISTRY.nodes:
+        for prefix in _INPUT_PREFIXES:
+            tag = f"{prefix}{nid}"
+            if dpg.does_item_exist(tag) and dpg.is_item_active(tag):
+                return True
+    return False
+
+
+def _snapshot_link(link_id: int) -> dict | None:
+    if link_id not in REGISTRY.links:
+        return None
+    start_slot, end_slot = REGISTRY.links[link_id]
+    src_nid = REGISTRY.slot_node.get(start_slot)
+    dst_nid = REGISTRY.slot_node.get(end_slot)
+    if src_nid is None or dst_nid is None:
+        return None
+    return {'type': 'link', 'src_nid': src_nid, 'dst_nid': dst_nid}
+
+
+def _snapshot_node(nid: int) -> dict | None:
+    node_type = REGISTRY.nodes.get(nid)
+    if node_type is None:
+        return None
+    node_tag = f"node_{nid}"
+    if not dpg.does_item_exist(node_tag):
+        return None
+    pos = dpg.get_item_pos(node_tag)
+    name = REGISTRY.node_names.get(nid, "")
+    values = {}
+    for prefix in _WIDGET_PREFIXES:
+        tag = f"{prefix}{nid}"
+        if dpg.does_item_exist(tag):
+            values[tag] = dpg.get_value(tag)
+    links = []
+    for _, (start_slot, end_slot) in REGISTRY.links.items():
+        s = REGISTRY.slot_node.get(start_slot)
+        e = REGISTRY.slot_node.get(end_slot)
+        if s == nid or e == nid:
+            links.append({'src_nid': s, 'dst_nid': e})
+    return {
+        'type': 'node', 'nid': nid, 'node_type': node_type,
+        'pos': list(pos), 'name': name, 'values': values, 'links': links,
+    }
+
+
+def _restore_link(snap: dict):
+    src_nid, dst_nid = snap['src_nid'], snap['dst_nid']
+    out_tag, in_tag = f"slot_out_{src_nid}", f"slot_in_{dst_nid}"
+    if not (dpg.does_item_exist(out_tag) and dpg.does_item_exist(in_tag)):
+        return
+    try:
+        start_slot = dpg.get_alias_id(out_tag)
+        end_slot = dpg.get_alias_id(in_tag)
+        if start_slot in REGISTRY.connections:
+            return  # link already exists
+        lid = dpg.add_node_link(start_slot, end_slot, parent="node_editor_container")
+        REGISTRY.links[lid] = (start_slot, end_slot)
+        REGISTRY.connections[start_slot] = end_slot
+    except Exception:
+        pass
+
+
+def _restore_node(snap: dict):
+    nid = snap['nid']
+    if nid in REGISTRY.nodes:
+        return  # nid collision — skip to avoid corruption
+    old_next = REGISTRY.next_id
+    REGISTRY.next_id = nid
+    created = create_node(snap['node_type'], pos=snap['pos'],
+                          name=snap['name'] if snap['name'] else None)
+    REGISTRY.next_id = max(old_next, nid + 1)
+    if created is None:
+        return
+    for tag, val in snap['values'].items():
+        if dpg.does_item_exist(tag):
+            try:
+                dpg.set_value(tag, val)
+            except Exception:
+                pass
+    for link_snap in snap['links']:
+        _restore_link(link_snap)
+
+
+def undo_last():
+    if not _UNDO_HISTORY:
+        return
+    entry = _UNDO_HISTORY.pop()
+    if entry['type'] == 'node':
+        _restore_node(entry)
+    elif entry['type'] == 'link':
+        _restore_link(entry)
+    elif entry['type'] == 'batch':
+        for item in reversed(entry['items']):
+            if item['type'] == 'node':
+                _restore_node(item)
+            elif item['type'] == 'link':
+                _restore_link(item)
+
+
+def _on_key_undo(sender=None, app_data=None, user_data=None):
+    if not (dpg.is_key_down(dpg.mvKey_LControl) or dpg.is_key_down(dpg.mvKey_RControl)):
+        return
+    if _any_input_active():
+        return
+    undo_last()
 
 
 def _on_key_delete(sender=None, app_data=None, user_data=None):
-    """Delete selected nodes and links when Backspace or Delete is pressed."""
+    """Delete selected nodes and links; block when an input field is active."""
+    if _any_input_active():
+        return
     if not dpg.does_item_exist("node_editor_container"):
         return
+    batch = []
     for dpg_id in list(dpg.get_selected_nodes("node_editor_container")):
         for nid in list(REGISTRY.nodes.keys()):
             try:
                 if dpg.does_item_exist(f"node_{nid}") and dpg.get_alias_id(f"node_{nid}") == dpg_id:
-                    delete_node(nid)
+                    snap = _snapshot_node(nid)
+                    if snap:
+                        batch.append(snap)
+                    delete_node(nid, _push_undo=False)
                     break
             except Exception:
                 pass
     for link_id in list(dpg.get_selected_links("node_editor_container")):
+        snap = _snapshot_link(link_id)
+        if snap:
+            batch.append(snap)
         delink_callback(None, link_id)
+    if batch:
+        _UNDO_HISTORY.append(batch[0] if len(batch) == 1 else {'type': 'batch', 'items': batch})
 
 
 def setup_link_handlers():
@@ -240,6 +375,7 @@ def setup_link_handlers():
         dpg.add_mouse_move_handler(callback=_on_canvas_mouse_move)
         dpg.add_key_press_handler(key=dpg.mvKey_Back,   callback=_on_key_delete)
         dpg.add_key_press_handler(key=dpg.mvKey_Delete, callback=_on_key_delete)
+        dpg.add_key_press_handler(key=dpg.mvKey_Z,      callback=_on_key_undo)
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +564,12 @@ def _on_energy_change(energy_val: str, _ds_nid: int):
 # Node deletion
 # ---------------------------------------------------------------------------
 
-def delete_node(nid: int):
+def delete_node(nid: int, _push_undo: bool = True):
+    if _push_undo:
+        snap = _snapshot_node(nid)
+        if snap:
+            _UNDO_HISTORY.append(snap)
+
     node_slots = {f"slot_in_{nid}", f"slot_out_{nid}"}
     for k, v in list(REGISTRY.slot_node.items()):
         if v == nid:
