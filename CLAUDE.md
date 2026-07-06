@@ -34,7 +34,8 @@ fce/
 |-- ui/
 |   |-- state.py         # Shared state: NodeRegistry, RUN_STATE, NODE_HIERARCHY, download queue
 |   |-- graph.py         # Node creation, link/delink callbacks, topology compiler, error highlighting
-|   `-- components.py    # UI callbacks: trigger_analysis_pipeline(), dataset download, canvas refresh
+|   |-- components.py    # UI callbacks: trigger_analysis_pipeline(), dataset download, canvas refresh
+|   `-- tutorial.py      # 11-page launch tutorial: show_tutorial(), page navigation, item highlighting
 |-- engine/
 |   |-- analytical_loop.py  # Event loop: reads ROOT files, applies cuts, fills histograms
 |   |-- path_filter.py      # Per-event and vectorized filtering, expression eval, cache I/O
@@ -102,6 +103,7 @@ Available in Selection and Observable nodes:
 - **Right-click on a link**: Deletes the hovered link (short click, < 5 px movement).
 - **Initial nodes**: Created pre-connected (DataSource → Multiplicity → Selection → Observable → Histogram) with named labels. `create_node()` accepts an optional `name` parameter.
 - **Node palette**: A fixed 70 px bar at the bottom of the window lists four draggable node templates (Multiplicity, Selection, Observable, Histogram). Drag any button onto the node editor canvas to create that node type at the drop position. Uses DPG native `drag_payload` on each button and `drop_callback` on the `node_editor_pane` child_window. Drop position is computed via `dpg.get_item_pos("node_editor_pane")` (screen-space origin) subtracted from `dpg.get_mouse_pos(local=False)`.
+- **Launch tutorial**: `ui/tutorial.py:show_tutorial()` is called via `dpg.set_frame_callback(frame=1, ...)` and shows a non-modal 640×310 px popup with 11 pages covering every feature. Navigation: `< Prev` (disabled on page 1), `Skip`, `Next >` (becomes `Finish` on the last page). Each page that references a specific UI element applies a gold DPG theme to it (`_tut_node_hl` for nodes, `_tut_item_hl` for buttons/headers/child-windows); highlight is cleared on page change, Skip, Finish, or X-close. All text is ASCII-only (DPG's default glyph range is Latin-1; characters above U+00FF render as `?`). Title+body live in a `child_window(height=-40)` so the nav bar is always pinned to the bottom. `ui/state.py:LARGE_FONT` holds the 20 px font used for the tutorial title.
 
 ## Testing approach
 
