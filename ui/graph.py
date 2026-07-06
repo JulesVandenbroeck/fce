@@ -878,12 +878,15 @@ def create_node(node_type: str, pos: list | None = None, name: str | None = None
 # ---------------------------------------------------------------------------
 
 def on_node_editor_drop(sender, app_data, user_data):
-    """Create a node at the drop position (local=True gives pane-relative coords)."""
+    """Create a node at the drop position using screen-to-pane coordinate mapping."""
     node_type = app_data
     if not node_type or not isinstance(node_type, str):
         return
-    pos = dpg.get_mouse_pos(local=True)
-    create_node(node_type, pos=[max(10, int(pos[0])), max(10, int(pos[1]))])
+    screen = dpg.get_mouse_pos(local=False)
+    rect = dpg.get_item_rect_min("node_editor_pane")
+    x = max(10, int(screen[0] - rect[0]))
+    y = max(10, int(screen[1] - rect[1]))
+    create_node(node_type, pos=[x, y])
 
 
 # ---------------------------------------------------------------------------
