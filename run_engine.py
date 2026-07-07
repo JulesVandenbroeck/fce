@@ -53,20 +53,29 @@ def execute_analysis(cfg, _unused):
         except Exception as plot_err:
             safe_set_state("status_msg", f"Plot error: {plot_err}")
 
-        # Statistical fit for each histogram that requests one
-        histograms = cfg.get("histograms", [{
-            "observable": cfg["observable"],
-            "bins": cfg["bins"], "min": cfg["min"], "max": cfg["max"],
-            "target": cfg["target"], "h5": cfg["h5"],
-        }])
-        for i, hcfg in enumerate(histograms):
+        # Statistical fit: find first histogram across all selections that has a target
+        fit_candidates = []
+        selections = cfg.get("selections")
+        if selections:
+            for sel_cfg in selections:
+                for hcfg in sel_cfg["histograms"]:
+                    fit_candidates.append(hcfg)
+        else:
+            fit_candidates = cfg.get("histograms", [{
+                "observable": cfg["observable"],
+                "bins": cfg["bins"], "min": cfg["min"], "max": cfg["max"],
+                "target": cfg["target"], "h5": cfg["h5"], "plot_idx": 0,
+            }])
+
+        for hcfg in fit_candidates:
             if hcfg.get("target", "None") in ("None", None, ""):
                 continue
             try:
                 from engine.fitter import run_fit
                 fit_cfg = dict(cfg)
                 fit_cfg.update(hcfg)
-                mu, sig = run_fit(fit_cfg, samples, en, hist_idx=i)
+                mu, sig = run_fit(fit_cfg, samples, en,
+                                  hist_idx=hcfg.get("plot_idx", 0))
                 safe_set_state("fit_mu",  mu)
                 safe_set_state("fit_sig", sig)
                 break  # expose first successful fit result in the UI
