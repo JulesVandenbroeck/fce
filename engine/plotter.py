@@ -14,14 +14,21 @@ plt.style.use(hep.style.ROOT)
 
 def render_plots(cfg, samples, en):
     detector   = cfg["detector"]
-    histograms = cfg.get("histograms", [{
-        "observable": cfg["observable"],
-        "bins": cfg["bins"], "min": cfg["min"], "max": cfg["max"],
-        "target": cfg["target"], "h5": cfg["h5"],
-    }])
+    selections = cfg.get("selections")
 
-    for i, hcfg in enumerate(histograms):
-        _render_single(cfg, samples, en, i, hcfg, detector)
+    if selections:
+        for sel_cfg in selections:
+            for hcfg in sel_cfg["histograms"]:
+                _render_single(cfg, samples, en, hcfg["plot_idx"], hcfg, detector)
+    else:
+        # Fallback: flat histograms list
+        histograms = cfg.get("histograms", [{
+            "observable": cfg["observable"],
+            "bins": cfg["bins"], "min": cfg["min"], "max": cfg["max"],
+            "target": cfg["target"], "h5": cfg["h5"],
+        }])
+        for i, hcfg in enumerate(histograms):
+            _render_single(cfg, samples, en, hcfg.get("plot_idx", i), hcfg, detector)
 
 
 def _render_single(cfg, samples, en, hist_idx, hcfg, detector):

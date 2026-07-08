@@ -280,8 +280,9 @@ def _restore_link(snap: dict):
     try:
         start_slot = dpg.get_alias_id(out_tag)
         end_slot = dpg.get_alias_id(in_tag)
-        if start_slot in REGISTRY.connections:
-            return  # link already exists
+        # Check if this exact (start, end) pair already exists (supports fan-out)
+        if any(s == start_slot and e == end_slot for s, e in REGISTRY.links.values()):
+            return
         lid = dpg.add_node_link(start_slot, end_slot, parent="node_editor_container")
         REGISTRY.links[lid] = (start_slot, end_slot)
         REGISTRY.connections[start_slot] = end_slot
@@ -481,6 +482,9 @@ def mark_nodes_from_pipeline_check(error_nids: list[int], all_nids: list[int]):
                 sid = _slot_id(f"slot_out_{nid}")
                 if sid is None or sid not in connected_starts:
                     parts.append("output not connected (connect to a Histogram)")
+                sid = _slot_id(f"slot_in_{nid}")
+                if sid is None or sid not in connected_ends:
+                    parts.append("input not connected (connect from a Selection)")
             elif ntype == "Histogram":
                 sid = _slot_id(f"slot_in_{nid}")
                 if sid is None or sid not in connected_ends:
@@ -920,17 +924,59 @@ def compile_graph_topology() -> dict:
         nphot = int(dpg.get_value(f"txt_photons_{n}")) if dpg.does_item_exist(f"txt_photons_{n}") else 0
         mult_cuts.append((nlep, njets, ltype, nphot))
 
-    sel_exprs = [
-        dpg.get_value(f"txt_sel_{n}").strip()
-        for n in sel_nids
-        if dpg.does_item_exist(f"txt_sel_{n}") and dpg.get_value(f"txt_sel_{n}").strip()
+    # Build per-node successor/predecessor maps from all links
+    node_successors   = {}  # nid -> [nid, ...]
+    node_predecessors = {}  # nid -> [nid, ...]
+    for _, (start_slot, end_slot) in REGISTRY.links.items():
+        s_nid = REGISTRY.slot_node.get(start_slot)
+        e_nid = REGISTRY.slot_node.get(end_slot)
+        if s_nid is not None and e_nid is not None:
+            node_successors.setdefault(s_nid, []).append(e_nid)
+            node_predecessors.setdefault(e_nid, []).append(s_nid)
+
+    # Selection branch roots: Selection nodes whose parent is NOT another Selection
+    sel_branch_roots = [
+        nid for nid in sel_nids
+        if not any(nodes.get(p) == "Selection" for p in node_predecessors.get(nid, []))
     ]
+    if not sel_branch_roots and sel_nids:
+        sel_branch_roots = [sel_nids[0]]
 
-    h5_sel = hashlib.md5(
-        (energy + detector + str(mult_cuts) + str(sel_exprs)).encode()
-    ).hexdigest()
+    # For each branch root BFS-collect the full Selection chain (handles AND-chaining)
+    def _collect_chain(root):
+        chain, visited, queue = [], set(), [root]
+        while queue:
+            nid = queue.pop(0)
+            if nid in visited:
+                continue
+            visited.add(nid)
+            if nodes.get(nid) == "Selection":
+                chain.append(nid)
+                for succ in node_successors.get(nid, []):
+                    if nodes.get(succ) == "Selection" and succ not in visited:
+                        queue.append(succ)
+        return chain
 
-    # Build Observable -> Histogram pairs by following graph links
+    branch_chains = {root: _collect_chain(root) for root in sel_branch_roots}
+
+    # Map each Selection nid back to its branch root
+    sel_to_branch = {
+        nid: root
+        for root, chain in branch_chains.items()
+        for nid in chain
+    }
+
+    # Find which Selection each Observable is directly connected to
+    obs_to_sel = {}  # obs_nid -> sel_nid
+    for _, (start_slot, end_slot) in REGISTRY.links.items():
+        s_nid = REGISTRY.slot_node.get(start_slot)
+        e_nid = REGISTRY.slot_node.get(end_slot)
+        if (s_nid is not None and e_nid is not None
+                and nodes.get(s_nid) == "Selection"
+                and nodes.get(e_nid) == "Observable"):
+            obs_to_sel[e_nid] = s_nid
+
+    # Find Observable -> Histogram pairs from graph links
     obs_hist_pairs = []
     for _, (start_slot, end_slot) in REGISTRY.links.items():
         s_nid = REGISTRY.slot_node.get(start_slot)
@@ -940,15 +986,35 @@ def compile_graph_topology() -> dict:
                 and nodes.get(e_nid) == "Histogram"):
             obs_hist_pairs.append((s_nid, e_nid))
 
-    # Fallback: first obs + first hist (covers single-node case before linking)
+    # Fallback when no links exist (e.g., only one of each node type, unlinked)
     if not obs_hist_pairs:
-        obs_nid  = obs_nids[0]  if obs_nids  else None
+        obs_nid  = obs_nids[0] if obs_nids else None
         hist_nid = next((n for n, t in nodes.items() if t == "Histogram"), None)
         if obs_nid is not None and hist_nid is not None:
             obs_hist_pairs = [(obs_nid, hist_nid)]
 
-    histograms = []
+    # Compute the prefix chain from branch root up to (and including) a given sel_nid.
+    # For an Observable directly connected to Selection_A in a chain [A, B], this
+    # returns [A] so that only expr_A is applied — not the full [A, B] chain.
+    def _prefix_chain(sel_nid):
+        root = sel_to_branch.get(sel_nid, sel_nid)
+        full_chain = branch_chains.get(root, [sel_nid])
+        try:
+            pos = full_chain.index(sel_nid)
+            return full_chain[:pos + 1]
+        except ValueError:
+            return [sel_nid]
+
+    # Group histograms by their Observable's direct parent Selection.
+    # This ensures Histogram_A (under Selection_A) uses only Selection_A's
+    # expressions even when Selection_B is AND-chained from Selection_A.
+    parent_sel_order = []   # ordered unique parent sel_nids (insertion order)
+    parent_sel_hists = {}   # sel_nid -> [raw hcfg params dict, ...]
+    unassigned = []
+
     for obs_nid, hist_nid in obs_hist_pairs:
+        sel_nid = obs_to_sel.get(obs_nid)
+
         observable = (dpg.get_value(f"txt_obs_{obs_nid}").strip()
                       if dpg.does_item_exist(f"txt_obs_{obs_nid}") else "met.pt")
         target  = (dpg.get_value(f"cb_target_{hist_nid}")
@@ -959,29 +1025,96 @@ def compile_graph_topology() -> dict:
                    if dpg.does_item_exist(f"txt_range_min_{hist_nid}") else "0.0")
         rng_max = (str(dpg.get_value(f"txt_range_max_{hist_nid}"))
                    if dpg.does_item_exist(f"txt_range_max_{hist_nid}") else "150.0")
-        h5_full = hashlib.md5(
-            (h5_sel + observable + bins + rng_min + rng_max + target).encode()
-        ).hexdigest()
         node_name = REGISTRY.node_names.get(hist_nid, "")
-        histograms.append({
-            "observable": observable,
-            "bins": bins, "min": rng_min, "max": rng_max,
-            "target": target, "h5": h5_full,
-            "node_name": node_name,
+        hcfg_raw = {
+            "observable": observable, "bins": bins, "min": rng_min, "max": rng_max,
+            "target": target, "node_name": node_name,
+        }
+
+        if sel_nid is not None:
+            if sel_nid not in parent_sel_hists:
+                parent_sel_order.append(sel_nid)
+                parent_sel_hists[sel_nid] = []
+            parent_sel_hists[sel_nid].append(hcfg_raw)
+        else:
+            unassigned.append(hcfg_raw)
+
+    # Unassigned histograms (no connected Selection) fall back to the first branch root
+    if unassigned and sel_branch_roots:
+        first_root = sel_branch_roots[0]
+        if first_root not in parent_sel_hists:
+            parent_sel_order.append(first_root)
+            parent_sel_hists[first_root] = []
+        parent_sel_hists[first_root].extend(unassigned)
+
+    # Sort parent_sel_order by (branch_root_nid, position_in_chain)
+    def _sel_sort_key(sid):
+        root = sel_to_branch.get(sid, sid)
+        chain = branch_chains.get(root, [sid])
+        try:
+            pos = chain.index(sid)
+        except ValueError:
+            pos = 0
+        return (root, pos)
+
+    parent_sel_order.sort(key=_sel_sort_key)
+
+    # Build selections list; each entry uses only the prefix chain for its parent sel_nid
+    mult_h5_base = energy + detector + str(mult_cuts)
+    plot_idx = 0
+    selections = []
+
+    for sel_nid in parent_sel_order:
+        prefix = _prefix_chain(sel_nid)
+        sel_exprs = [
+            dpg.get_value(f"txt_sel_{n}").strip()
+            for n in prefix
+            if dpg.does_item_exist(f"txt_sel_{n}") and dpg.get_value(f"txt_sel_{n}").strip()
+        ]
+        h5_sel = hashlib.md5((mult_h5_base + str(sel_exprs)).encode()).hexdigest()
+
+        histograms = []
+        for hcfg_raw in parent_sel_hists.get(sel_nid, []):
+            h5_full = hashlib.md5(
+                (h5_sel + hcfg_raw["observable"] + hcfg_raw["bins"]
+                 + hcfg_raw["min"] + hcfg_raw["max"] + hcfg_raw["target"]).encode()
+            ).hexdigest()
+            entry = dict(hcfg_raw)
+            entry["h5"] = h5_full
+            entry["plot_idx"] = plot_idx
+            histograms.append(entry)
+            plot_idx += 1
+
+        sel_name = REGISTRY.node_names.get(sel_nid, "").strip()
+        selections.append({
+            "nid": sel_nid,
+            "node_name": sel_name if sel_name else f"Selection {len(selections) + 1}",
+            "sel_exprs": sel_exprs,
+            "h5_sel": h5_sel,
+            "histograms": histograms,
         })
 
-    first = histograms[0] if histograms else {
-        "observable": "met.pt", "bins": "40", "min": "0.0", "max": "150.0",
-        "target": "None", "h5": hashlib.md5(h5_sel.encode()).hexdigest(),
+    # Flatten for backward-compat fields (first selection, first histogram)
+    first_sel  = selections[0] if selections else {
+        "sel_exprs": [], "h5_sel": hashlib.md5(mult_h5_base.encode()).hexdigest(),
+        "histograms": [],
     }
+    first_hist = first_sel["histograms"][0] if first_sel["histograms"] else {
+        "observable": "met.pt", "bins": "40", "min": "0.0", "max": "150.0",
+        "target": "None", "h5": hashlib.md5(first_sel["h5_sel"].encode()).hexdigest(),
+        "plot_idx": 0,
+    }
+    all_histograms = [h for sel in selections for h in sel["histograms"]]
 
     return {
         "energy": energy, "detector": detector,
-        "observable": first["observable"],
-        "bins": first["bins"], "min": first["min"], "max": first["max"],
-        "target": first["target"], "h5": first["h5"], "h5_sel": h5_sel,
-        "mult_cuts": mult_cuts, "sel_exprs": sel_exprs,
-        "histograms": histograms,
+        "observable": first_hist["observable"],
+        "bins": first_hist["bins"], "min": first_hist["min"], "max": first_hist["max"],
+        "target": first_hist["target"], "h5": first_hist["h5"],
+        "h5_sel": first_sel["h5_sel"],
+        "mult_cuts": mult_cuts, "sel_exprs": first_sel["sel_exprs"],
+        "histograms": all_histograms,
+        "selections": selections,
     }
 
 
@@ -1035,10 +1168,16 @@ def check_pipeline_connectivity() -> list[int]:
                 error_nids.append(nid)
 
         elif ntype == "Observable":
-            # Must have output to a Histogram; input from Selection is optional
+            # Must have output to a Histogram and input from a Selection
+            has_err = False
             sid = _slot_id(f"slot_out_{nid}")
             if sid is None or sid not in connected_starts:
                 error_nids.append(nid)
+                has_err = True
+            sid = _slot_id(f"slot_in_{nid}")
+            if sid is None or sid not in connected_ends:
+                if not has_err:
+                    error_nids.append(nid)
 
         elif ntype == "Histogram":
             sid = _slot_id(f"slot_in_{nid}")

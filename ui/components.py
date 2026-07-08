@@ -48,43 +48,76 @@ def _load_png_to_texture(png_path: str, texture_tag: str) -> bool:
         return False
 
 
-def refresh_ui_canvas(n_histograms: int = 1, hist_labels: list | None = None):
-    """Load plot PNGs into textures and rebuild the plot display group."""
+def refresh_ui_canvas(selections_info: list | None = None,
+                      n_histograms: int = 1, hist_labels: list | None = None):
+    """Load plot PNGs into textures and rebuild the plot display group.
+
+    selections_info: list of {"name": str, "plot_indices": [int]}, one per Selection
+    branch.  When provided, plots are grouped under a collapsing header per selection
+    (only when there are multiple selections).  Within each selection the plots are
+    stacked without inner dropdowns.  Falls back to the legacy n_histograms /
+    hist_labels behaviour when selections_info is None.
+    """
     if not dpg.does_item_exist("plot_display_group"):
         return
 
-    loaded = []
-    for i in range(min(n_histograms, MAX_HIST_TEXTURES)):
+    # Collect all plot indices to load
+    if selections_info:
+        all_indices = [pi for sel in selections_info for pi in sel["plot_indices"]]
+    else:
+        all_indices = list(range(min(n_histograms, MAX_HIST_TEXTURES)))
+
+    loaded = set()
+    for i in all_indices:
+        if i >= MAX_HIST_TEXTURES:
+            continue
         png_path = os.path.join(FCE_DIR, f"hist_{i}.png")
-        ok = _load_png_to_texture(png_path, f"plot_texture_buffer_{i}")
-        if ok:
-            loaded.append(i)
+        if _load_png_to_texture(png_path, f"plot_texture_buffer_{i}"):
+            loaded.add(i)
 
     if not loaded:
         return
 
     dpg.delete_item("plot_display_group", children_only=True)
 
-    if len(loaded) == 1:
-        dpg.add_image(
-            f"plot_texture_buffer_{loaded[0]}",
-            tag="canvas_view_frame_0",
-            width=636, height=454,
-            parent="plot_display_group",
-        )
-    else:
-        labels = hist_labels or []
-        for i in loaded:
-            label = labels[i] if i < len(labels) else f"Histogram {i + 1}"
+    if selections_info and len(selections_info) > 1:
+        # Multiple selections: one collapsing header per selection, plots stacked inside
+        for sel in selections_info:
+            indices = [i for i in sel["plot_indices"] if i in loaded]
+            if not indices:
+                continue
             with dpg.collapsing_header(
-                label=label,
-                default_open=False,
+                label=sel["name"],
+                default_open=True,
                 parent="plot_display_group",
             ):
+                for i in indices:
+                    dpg.add_image(
+                        f"plot_texture_buffer_{i}",
+                        tag=f"canvas_view_frame_{i}",
+                        width=636, height=454,
+                    )
+    else:
+        # Single selection (or legacy call): show plots stacked, no outer dropdown
+        indices = (
+            [i for i in selections_info[0]["plot_indices"] if i in loaded]
+            if selections_info
+            else [i for i in all_indices if i in loaded]
+        )
+        if len(indices) == 1:
+            dpg.add_image(
+                f"plot_texture_buffer_{indices[0]}",
+                tag="canvas_view_frame_0",
+                width=636, height=454,
+                parent="plot_display_group",
+            )
+        else:
+            for i in indices:
                 dpg.add_image(
                     f"plot_texture_buffer_{i}",
                     tag=f"canvas_view_frame_{i}",
                     width=636, height=454,
+                    parent="plot_display_group",
                 )
 
 
@@ -99,10 +132,12 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
             dpg.set_value("ui_progress_bar", 1.0)
             dpg.configure_item("ui_progress_bar", overlay="100%")
 
-            # Refresh plots — use the stored histogram count from last run
-            n = getattr(_frame_poll_callback, "_last_n_hist", 1)
-            labels = getattr(_frame_poll_callback, "_last_hist_labels", None)
-            refresh_ui_canvas(n_histograms=n, hist_labels=labels)
+            # Refresh plots using selections_info when available
+            sel_info = getattr(_frame_poll_callback, "_last_selections_info", None)
+            n        = getattr(_frame_poll_callback, "_last_n_hist", 1)
+            labels   = getattr(_frame_poll_callback, "_last_hist_labels", None)
+            refresh_ui_canvas(selections_info=sel_info,
+                              n_histograms=n, hist_labels=labels)
             log_to_message_center("Completed.")
 
             # Update fit results if available
@@ -186,14 +221,30 @@ def trigger_analysis_pipeline():
 
     cfg = compile_graph_topology()
 
-    # Store histogram count and labels for display after run
-    histograms = cfg.get("histograms", [])
-    _frame_poll_callback._last_n_hist = max(1, len(histograms))
-    hist_labels = []
-    for i, hcfg in enumerate(histograms):
-        name = hcfg.get("node_name", "").strip()
-        hist_labels.append(name if name else f"Histogram {i + 1}")
-    _frame_poll_callback._last_hist_labels = hist_labels
+    # Build selections_info for the display refresh after run
+    selections = cfg.get("selections", [])
+    if selections:
+        selections_info = []
+        for sel in selections:
+            name = sel.get("node_name", "").strip()
+            if not name:
+                name = f"Selection {len(selections_info) + 1}"
+            plot_indices = [h["plot_idx"] for h in sel.get("histograms", [])]
+            selections_info.append({"name": name, "plot_indices": plot_indices})
+        _frame_poll_callback._last_selections_info = selections_info
+        _frame_poll_callback._last_n_hist = sum(
+            len(s["plot_indices"]) for s in selections_info
+        )
+        _frame_poll_callback._last_hist_labels = None
+    else:
+        histograms = cfg.get("histograms", [])
+        _frame_poll_callback._last_selections_info = None
+        _frame_poll_callback._last_n_hist = max(1, len(histograms))
+        hist_labels = []
+        for i, hcfg in enumerate(histograms):
+            name = hcfg.get("node_name", "").strip()
+            hist_labels.append(name if name else f"Histogram {i + 1}")
+        _frame_poll_callback._last_hist_labels = hist_labels
 
     dpg.configure_item("btn_trigger", label="Stop (Processing..)", enabled=True)
 
