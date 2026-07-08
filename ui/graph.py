@@ -993,13 +993,27 @@ def compile_graph_topology() -> dict:
         if obs_nid is not None and hist_nid is not None:
             obs_hist_pairs = [(obs_nid, hist_nid)]
 
-    # Group histogram configs by branch root
-    branch_histograms = {root: [] for root in sel_branch_roots}
+    # Compute the prefix chain from branch root up to (and including) a given sel_nid.
+    # For an Observable directly connected to Selection_A in a chain [A, B], this
+    # returns [A] so that only expr_A is applied — not the full [A, B] chain.
+    def _prefix_chain(sel_nid):
+        root = sel_to_branch.get(sel_nid, sel_nid)
+        full_chain = branch_chains.get(root, [sel_nid])
+        try:
+            pos = full_chain.index(sel_nid)
+            return full_chain[:pos + 1]
+        except ValueError:
+            return [sel_nid]
+
+    # Group histograms by their Observable's direct parent Selection.
+    # This ensures Histogram_A (under Selection_A) uses only Selection_A's
+    # expressions even when Selection_B is AND-chained from Selection_A.
+    parent_sel_order = []   # ordered unique parent sel_nids (insertion order)
+    parent_sel_hists = {}   # sel_nid -> [raw hcfg params dict, ...]
     unassigned = []
 
     for obs_nid, hist_nid in obs_hist_pairs:
-        sel_nid     = obs_to_sel.get(obs_nid)
-        branch_root = sel_to_branch.get(sel_nid) if sel_nid is not None else None
+        sel_nid = obs_to_sel.get(obs_nid)
 
         observable = (dpg.get_value(f"txt_obs_{obs_nid}").strip()
                       if dpg.does_item_exist(f"txt_obs_{obs_nid}") else "met.pt")
@@ -1012,48 +1026,68 @@ def compile_graph_topology() -> dict:
         rng_max = (str(dpg.get_value(f"txt_range_max_{hist_nid}"))
                    if dpg.does_item_exist(f"txt_range_max_{hist_nid}") else "150.0")
         node_name = REGISTRY.node_names.get(hist_nid, "")
-        hcfg = {
+        hcfg_raw = {
             "observable": observable, "bins": bins, "min": rng_min, "max": rng_max,
             "target": target, "node_name": node_name,
         }
-        if branch_root is not None:
-            branch_histograms[branch_root].append(hcfg)
+
+        if sel_nid is not None:
+            if sel_nid not in parent_sel_hists:
+                parent_sel_order.append(sel_nid)
+                parent_sel_hists[sel_nid] = []
+            parent_sel_hists[sel_nid].append(hcfg_raw)
         else:
-            unassigned.append(hcfg)
+            unassigned.append(hcfg_raw)
 
-    # Histograms with no Selection parent go to the first branch
+    # Unassigned histograms (no connected Selection) fall back to the first branch root
     if unassigned and sel_branch_roots:
-        branch_histograms[sel_branch_roots[0]].extend(unassigned)
+        first_root = sel_branch_roots[0]
+        if first_root not in parent_sel_hists:
+            parent_sel_order.append(first_root)
+            parent_sel_hists[first_root] = []
+        parent_sel_hists[first_root].extend(unassigned)
 
-    # Build selections list; assign global plot_idx across all branches
+    # Sort parent_sel_order by (branch_root_nid, position_in_chain)
+    def _sel_sort_key(sid):
+        root = sel_to_branch.get(sid, sid)
+        chain = branch_chains.get(root, [sid])
+        try:
+            pos = chain.index(sid)
+        except ValueError:
+            pos = 0
+        return (root, pos)
+
+    parent_sel_order.sort(key=_sel_sort_key)
+
+    # Build selections list; each entry uses only the prefix chain for its parent sel_nid
     mult_h5_base = energy + detector + str(mult_cuts)
     plot_idx = 0
     selections = []
 
-    for root in sel_branch_roots:
-        chain = branch_chains.get(root, [root])
+    for sel_nid in parent_sel_order:
+        prefix = _prefix_chain(sel_nid)
         sel_exprs = [
             dpg.get_value(f"txt_sel_{n}").strip()
-            for n in chain
+            for n in prefix
             if dpg.does_item_exist(f"txt_sel_{n}") and dpg.get_value(f"txt_sel_{n}").strip()
         ]
         h5_sel = hashlib.md5((mult_h5_base + str(sel_exprs)).encode()).hexdigest()
 
         histograms = []
-        for hcfg in branch_histograms.get(root, []):
+        for hcfg_raw in parent_sel_hists.get(sel_nid, []):
             h5_full = hashlib.md5(
-                (h5_sel + hcfg["observable"] + hcfg["bins"]
-                 + hcfg["min"] + hcfg["max"] + hcfg["target"]).encode()
+                (h5_sel + hcfg_raw["observable"] + hcfg_raw["bins"]
+                 + hcfg_raw["min"] + hcfg_raw["max"] + hcfg_raw["target"]).encode()
             ).hexdigest()
-            entry = dict(hcfg)
+            entry = dict(hcfg_raw)
             entry["h5"] = h5_full
             entry["plot_idx"] = plot_idx
             histograms.append(entry)
             plot_idx += 1
 
-        sel_name = REGISTRY.node_names.get(root, "").strip()
+        sel_name = REGISTRY.node_names.get(sel_nid, "").strip()
         selections.append({
-            "nid": root,
+            "nid": sel_nid,
             "node_name": sel_name if sel_name else f"Selection {len(selections) + 1}",
             "sel_exprs": sel_exprs,
             "h5_sel": h5_sel,
