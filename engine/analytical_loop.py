@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import shutil
 import threading
@@ -19,6 +20,33 @@ hdir = get_fce_home()
 # OPT-3: parallel workers per selection branch; each sample is independent
 _MAX_WORKERS = 4
 
+# Persistent event-count cache: maps "{detector}_{energy}_{sample}" -> int
+_EVENT_COUNTS_FILE = os.path.join(hdir, "cache", "event_counts.json")
+
+
+def _load_event_counts() -> dict:
+    """Load the persistent event-count cache from disk."""
+    if os.path.exists(_EVENT_COUNTS_FILE):
+        try:
+            with open(_EVENT_COUNTS_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_event_counts(counts: dict, file_lock: threading.Lock):
+    """Atomically write the event-count cache to disk (POSIX rename)."""
+    tmp = _EVENT_COUNTS_FILE + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(_EVENT_COUNTS_FILE), exist_ok=True)
+        with file_lock:
+            with open(tmp, "w") as f:
+                json.dump(counts, f)
+            os.replace(tmp, _EVENT_COUNTS_FILE)
+    except Exception:
+        pass
+
 
 class hist:
     def __init__(self):
@@ -30,8 +58,17 @@ class hist:
 
 
 def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
-                    compiled_sel_exprs, step_counter, step_lock, total_steps):
-    """Process one sample for one selection branch: build cache then fill histograms."""
+                    compiled_sel_exprs, progress_ctx):
+    """Process one sample for one selection branch: build cache then fill histograms.
+
+    progress_ctx keys:
+      events_done   [int]  — running total events processed (mutable list)
+      total_events  [int]  — total events to read across non-cached pairs (mutable)
+      event_counts  dict   — in-memory copy of the event-count JSON cache
+      plock         Lock   — guards events_done / total_events
+      flock         Lock   — serialises event_counts.json writes
+      key_prefix    str    — "{detector}_{energy_nospaces}_"
+    """
     n_samp = len(active_samples)
     h5_sel = sel_cfg["h5_sel"]
     histograms = sel_cfg["histograms"]
@@ -83,12 +120,6 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
                                          cfg["energy"].replace(" ", ""), f"{s}.root")
                 if not os.path.exists(data_file):
                     update_run_state("status_msg", f"Missing data: {s}")
-                    with step_lock:
-                        step_counter[0] += 1
-                        update_run_state(
-                            "progress",
-                            min(0.78, step_counter[0] / max(1, total_steps) * 0.80),
-                        )
                     return False
 
             update_run_state("status_msg", f"Processing [{idx+1}/{n_samp}]")
@@ -97,11 +128,21 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
             try:
                 with uproot.open(data_file) as f_root:
                     tr = f_root["ntuple"]
-                    total_entries = tr.num_entries
+                    num_entries = tr.num_entries
                     v_keys = [k for k in tr.keys()
                               if "pt" in k or "eta" in k or "phi" in k
                               or "e" in k or "weight" in k or "btag" in k
                               or "d0signif" in k or "z0signif" in k]
+
+                    # Register this sample's event count and update progress denominator.
+                    ec_key = progress_ctx["key_prefix"] + s
+                    with progress_ctx["plock"]:
+                        old_cnt = progress_ctx["event_counts"].get(ec_key, 0)
+                        if old_cnt == 0:
+                            # First time seeing this sample: add to denominator
+                            progress_ctx["total_events"][0] += num_entries
+                        progress_ctx["event_counts"][ec_key] = num_entries
+                    _save_event_counts(progress_ctx["event_counts"], progress_ctx["flock"])
 
                     entries_processed = 0
                     for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
@@ -111,13 +152,23 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
                         nev = len(arrays["weight"])
                         _, _, stop_req = filter_raw_event_data(
                             arrays, nev, branch_cfg, None, None, None, "",
-                            idx, n_samp, entries_processed, total_entries,
+                            idx, n_samp, entries_processed, num_entries,
                             cache_acc=cache_acc,
                         )
                         if stop_req or get_run_state("stop"):
                             update_run_state("running", False)
                             return False
                         entries_processed += nev
+
+                        # Advance progress bar based on events processed
+                        with progress_ctx["plock"]:
+                            progress_ctx["events_done"][0] += nev
+                            tot = progress_ctx["total_events"][0]
+                            if tot > 0:
+                                update_run_state(
+                                    "progress",
+                                    min(0.78, progress_ctx["events_done"][0] / tot * 0.80),
+                                )
                         del arrays
                         # OPT-5: CPython's reference counting frees `arrays` on `del`;
                         # explicit gc.collect() between baskets is unnecessary overhead.
@@ -126,19 +177,9 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
 
             except Exception as err:
                 update_run_state("status_msg", f"Error reading {s}: {err}")
-                with step_lock:
-                    step_counter[0] += 1
-                    update_run_state(
-                        "progress",
-                        min(0.99, step_counter[0] / max(1, total_steps)),
-                    )
                 return False
 
     if not os.path.exists(sel_cache):
-        with step_lock:
-            step_counter[0] += 1
-            update_run_state("progress",
-                             min(0.99, step_counter[0] / max(1, total_steps)))
         return False
 
     # ── Fill each histogram in this branch from the selection cache ──────────
@@ -163,10 +204,6 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
                                   idx, n_samp)
         write_final_histograms(hdir, s, hcfg["h5"], outHist, out_path)
 
-    with step_lock:
-        step_counter[0] += 1
-        update_run_state("progress",
-                         min(0.78, step_counter[0] / max(1, total_steps) * 0.80))
     return True
 
 
@@ -192,9 +229,28 @@ def run_physics_loop(cfg, samples, active_samples, en):
     # Pre-compute the multiplicity component of the cache key (matches compile_graph_topology)
     mult_h5_base = cfg["energy"] + cfg["detector"] + str(cfg.get("mult_cuts", []))
 
-    total_steps = len(selections) * len(active_samples)
-    step_counter = [0]   # mutable so worker closures can increment it
-    step_lock    = threading.Lock()
+    # ── Event-count-based progress ────────────────────────────────────────────
+    event_counts = _load_event_counts()
+    ec_prefix = f"{cfg['detector']}_{cfg['energy'].replace(' ', '')}_"
+
+    # Compute progress denominator from known counts for non-cached (sel, sample) pairs.
+    total_events_init = 0
+    for sel_cfg in selections:
+        h5_sel = sel_cfg["h5_sel"]
+        for s in active_samples:
+            sel_cache = os.path.join(hdir, "cache", f"sel_{h5_sel}_{s}.npz")
+            if not os.path.exists(sel_cache):
+                cnt = event_counts.get(ec_prefix + s, 0)
+                total_events_init += cnt
+
+    progress_ctx = {
+        "events_done":  [0],
+        "total_events": [total_events_init],
+        "event_counts": event_counts,
+        "plock": threading.Lock(),   # progress numerator/denominator
+        "flock": threading.Lock(),   # event_counts.json file writes
+        "key_prefix": ec_prefix,
+    }
     processed_any = False
 
     for sel_cfg in selections:
@@ -232,7 +288,7 @@ def run_physics_loop(cfg, samples, active_samples, en):
                 pool.submit(
                     _process_sample,
                     sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
-                    compiled_sel_exprs, step_counter, step_lock, total_steps,
+                    compiled_sel_exprs, progress_ctx,
                 ): s
                 for idx, s in enumerate(active_samples)
             }

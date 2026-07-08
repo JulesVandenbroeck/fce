@@ -275,16 +275,21 @@ def trigger_analysis_pipeline():
     except Exception:
         pass
 
-    # Reset runtime themes: clear non-cached nodes, keep cached ones green
-    for _nid in list(REGISTRY.nodes.keys()):
-        if _nid not in _cached_sel_nids:
-            _clear_node_runtime_theme(_nid)
-        else:
-            _set_node_done(_nid)
+    # DataSource and Multiplicity are config-only; they're always "done".
+    _always_done = {nid for nid, ntype in REGISTRY.nodes.items()
+                    if ntype in ("DataSource", "Multiplicity")}
+    _pre_done = set(_cached_sel_nids) | _always_done
 
-    # Seed RUN_STATE node sets with pre-confirmed cached selections
+    # Reset runtime themes: clear non-pre-done nodes, keep pre-done ones green
+    for _nid in list(REGISTRY.nodes.keys()):
+        if _nid in _pre_done:
+            _set_node_done(_nid)
+        else:
+            _clear_node_runtime_theme(_nid)
+
+    # Seed RUN_STATE node sets
     safe_set_state("active_nodes",    set())
-    safe_set_state("completed_nodes", set(_cached_sel_nids))
+    safe_set_state("completed_nodes", _pre_done)
 
     # Build selections_info for the display refresh after run
     selections = cfg.get("selections", [])

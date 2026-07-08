@@ -437,18 +437,25 @@ def clear_all_node_errors():
 # Runtime node state highlighting (active / done) — applied from main thread
 # ---------------------------------------------------------------------------
 
-_NODE_RUNTIME_STATES: dict[int, str] = {}  # nid -> "active" | "done"
+_NODE_RUNTIME_STATES: dict[int, str] = {}     # nid -> "active" | "done"
+_NODE_RUNTIME_THEME_IDS: dict[int, int] = {}  # nid -> DPG theme item id (integer UUID)
+
+
+def _delete_runtime_theme(nid: int):
+    """Delete the DPG theme item previously created for nid's runtime highlight."""
+    old_id = _NODE_RUNTIME_THEME_IDS.pop(nid, None)
+    if old_id is not None and dpg.does_item_exist(old_id):
+        dpg.delete_item(old_id)
 
 
 def _set_node_active(nid: int):
     """Apply an orange/amber theme to indicate the node is currently processing."""
-    node_tag  = f"node_{nid}"
-    theme_tag = f"node_run_theme_{nid}"
+    node_tag = f"node_{nid}"
     if not dpg.does_item_exist(node_tag):
         return
-    if dpg.does_item_exist(theme_tag):
-        dpg.delete_item(theme_tag)
-    with dpg.theme(tag=theme_tag):
+    _delete_runtime_theme(nid)
+    theme_id = dpg.generate_uuid()
+    with dpg.theme(tag=theme_id):
         with dpg.theme_component(dpg.mvNode):
             dpg.add_theme_color(dpg.mvNodeCol_NodeBackground,
                                 (75, 50, 8), category=dpg.mvThemeCat_Nodes)
@@ -458,19 +465,19 @@ def _set_node_active(nid: int):
                                 (95, 65, 12), category=dpg.mvThemeCat_Nodes)
             dpg.add_theme_color(dpg.mvNodeCol_NodeOutline,
                                 (215, 145, 25), category=dpg.mvThemeCat_Nodes)
-    dpg.bind_item_theme(node_tag, theme_tag)
+    dpg.bind_item_theme(node_tag, theme_id)
+    _NODE_RUNTIME_THEME_IDS[nid] = theme_id
     _NODE_RUNTIME_STATES[nid] = "active"
 
 
 def _set_node_done(nid: int):
     """Apply a green theme to indicate the node completed successfully."""
-    node_tag  = f"node_{nid}"
-    theme_tag = f"node_run_theme_{nid}"
+    node_tag = f"node_{nid}"
     if not dpg.does_item_exist(node_tag):
         return
-    if dpg.does_item_exist(theme_tag):
-        dpg.delete_item(theme_tag)
-    with dpg.theme(tag=theme_tag):
+    _delete_runtime_theme(nid)
+    theme_id = dpg.generate_uuid()
+    with dpg.theme(tag=theme_id):
         with dpg.theme_component(dpg.mvNode):
             dpg.add_theme_color(dpg.mvNodeCol_NodeBackground,
                                 (15, 58, 22), category=dpg.mvThemeCat_Nodes)
@@ -480,20 +487,17 @@ def _set_node_done(nid: int):
                                 (20, 74, 30), category=dpg.mvThemeCat_Nodes)
             dpg.add_theme_color(dpg.mvNodeCol_NodeOutline,
                                 (48, 195, 70), category=dpg.mvThemeCat_Nodes)
-    dpg.bind_item_theme(node_tag, theme_tag)
+    dpg.bind_item_theme(node_tag, theme_id)
+    _NODE_RUNTIME_THEME_IDS[nid] = theme_id
     _NODE_RUNTIME_STATES[nid] = "done"
 
 
 def _clear_node_runtime_theme(nid: int):
     """Remove the runtime theme from a node and restore its default appearance."""
-    node_tag  = f"node_{nid}"
-    theme_tag = f"node_run_theme_{nid}"
-    if not dpg.does_item_exist(node_tag):
-        _NODE_RUNTIME_STATES.pop(nid, None)
-        return
-    if dpg.does_item_exist(theme_tag):
-        dpg.delete_item(theme_tag)
-    dpg.bind_item_theme(node_tag, 0)
+    node_tag = f"node_{nid}"
+    _delete_runtime_theme(nid)
+    if dpg.does_item_exist(node_tag):
+        dpg.bind_item_theme(node_tag, 0)
     _NODE_RUNTIME_STATES.pop(nid, None)
 
 
@@ -502,6 +506,7 @@ def clear_all_node_runtime_states():
     for nid in list(REGISTRY.nodes.keys()):
         _clear_node_runtime_theme(nid)
     _NODE_RUNTIME_STATES.clear()
+    _NODE_RUNTIME_THEME_IDS.clear()
 
 
 def apply_node_runtime_states(active_nodes: set, completed_nodes: set):
