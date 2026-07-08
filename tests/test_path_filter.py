@@ -100,20 +100,16 @@ def test_make_cache_acc_has_all_keys():
     acc = make_cache_acc()
     for key in _CACHE_KEYS:
         assert key in acc
-        assert acc[key] == []
+        assert hasattr(acc[key], "__len__")  # pre-allocated numpy array
+    assert acc["_n"] == 0
 
 
 def test_save_cache_and_reload(tmp_path):
+    from engine.path_filter import _append_event, _P
     acc = make_cache_acc()
-    acc["weight"].append(1.5)
-    acc["nlep"].append(2)
-    acc["nel"].append(1)
-    acc["nmu"].append(1)
-    acc["njets"].append(0)
-    acc["nphot"].append(0)
-    for k in _CACHE_KEYS:
-        if not acc[k]:
-            acc[k].append(0.0)
+    null = _P()
+    w_obj = _P(pt=0.0, eta=0.0, phi=0.0, e=0.0)
+    _append_event(acc, 2, 1, 1, 0, 0, null, null, null, null, null, null, w_obj, 1.5)
 
     cache_file = str(tmp_path / "test_cache.npz")
     save_cache(cache_file, acc)

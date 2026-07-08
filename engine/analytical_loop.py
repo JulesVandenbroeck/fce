@@ -1,9 +1,10 @@
 import hashlib
 import os
-import gc
 import shutil
+import threading
 import uproot
 import boost_histogram as bh
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ui.state import get_run_state, update_run_state
 from engine.path_filter import (filter_raw_event_data, fill_histogram_from_cache,
@@ -13,6 +14,9 @@ from engine.path_final import write_final_histograms
 from paths import get_fce_home
 
 hdir = get_fce_home()
+
+# OPT-3: parallel workers per selection branch; each sample is independent
+_MAX_WORKERS = 4
 
 
 class hist:
@@ -24,8 +28,148 @@ class hist:
         self.h["h"] = bh.Histogram(ax)
 
 
+def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
+                    compiled_sel_exprs, step_counter, step_lock, total_steps):
+    """Process one sample for one selection branch: build cache then fill histograms."""
+    n_samp = len(active_samples)
+    h5_sel = sel_cfg["h5_sel"]
+    histograms = sel_cfg["histograms"]
+
+    branch_cfg = dict(cfg)
+    branch_cfg["sel_exprs"] = sel_cfg["sel_exprs"]
+    branch_cfg["compiled_sel_exprs"] = compiled_sel_exprs  # OPT-2
+    branch_cfg["h5_sel"] = h5_sel
+
+    if get_run_state("stop"):
+        return False
+
+    sel_cache = os.path.join(hdir, "cache", f"sel_{h5_sel}_{s}.npz")
+
+    # ── Ensure selection cache exists ────────────────────────────────────────
+    if not os.path.exists(sel_cache):
+        derived = False
+        sel_exprs_list = sel_cfg.get("sel_exprs", [])
+
+        # If this selection is a chain prefix (>1 expression), check whether
+        # the parent prefix cache already exists and filter it instead of
+        # re-reading the ROOT file.
+        if len(sel_exprs_list) > 1:
+            parent_exprs = sel_exprs_list[:-1]
+            parent_h5 = hashlib.md5(
+                (mult_h5_base + str(parent_exprs)).encode()
+            ).hexdigest()
+            parent_cache = os.path.join(hdir, "cache", f"sel_{parent_h5}_{s}.npz")
+            if os.path.exists(parent_cache):
+                update_run_state("status_msg",
+                                 f"[{idx+1}/{n_samp}] filtering from parent cache")
+                try:
+                    last_expr = sel_exprs_list[-1]
+                    compiled_last = ([compile(last_expr, '<sel>', 'eval')]
+                                     if last_expr else [])
+                    filter_selection_cache(
+                        parent_cache, [last_expr], sel_cache,
+                        compiled_exprs=compiled_last,
+                    )
+                    derived = True
+                except Exception as err:
+                    update_run_state("status_msg", f"Cache filter error: {err}")
+
+        if not derived:
+            data_file = os.path.join(os.getcwd(), "datasets", cfg["detector"],
+                                     cfg["energy"].replace(" ", ""), f"{s}.root")
+            if not os.path.exists(data_file):
+                data_file = os.path.join(hdir, "datasets", cfg["detector"],
+                                         cfg["energy"].replace(" ", ""), f"{s}.root")
+                if not os.path.exists(data_file):
+                    update_run_state("status_msg", f"Missing data: {s}")
+                    with step_lock:
+                        step_counter[0] += 1
+                        update_run_state(
+                            "progress",
+                            min(0.99, step_counter[0] / max(1, total_steps)),
+                        )
+                    return False
+
+            update_run_state("status_msg", f"Processing [{idx+1}/{n_samp}]")
+            cache_acc = make_cache_acc()
+
+            try:
+                with uproot.open(data_file) as f_root:
+                    tr = f_root["ntuple"]
+                    total_entries = tr.num_entries
+                    v_keys = [k for k in tr.keys()
+                              if "pt" in k or "eta" in k or "phi" in k
+                              or "e" in k or "weight" in k or "btag" in k
+                              or "d0signif" in k or "z0signif" in k]
+
+                    entries_processed = 0
+                    for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
+                        if get_run_state("stop"):
+                            update_run_state("running", False)
+                            return False
+                        nev = len(arrays["weight"])
+                        _, _, stop_req = filter_raw_event_data(
+                            arrays, nev, branch_cfg, None, None, None, "",
+                            idx, n_samp, entries_processed, total_entries,
+                            cache_acc=cache_acc,
+                        )
+                        if stop_req or get_run_state("stop"):
+                            update_run_state("running", False)
+                            return False
+                        entries_processed += nev
+                        del arrays
+                        # OPT-5: CPython's reference counting frees `arrays` on `del`;
+                        # explicit gc.collect() between baskets is unnecessary overhead.
+
+                save_cache(sel_cache, cache_acc)
+
+            except Exception as err:
+                update_run_state("status_msg", f"Error reading {s}: {err}")
+                with step_lock:
+                    step_counter[0] += 1
+                    update_run_state(
+                        "progress",
+                        min(0.99, step_counter[0] / max(1, total_steps)),
+                    )
+                return False
+
+    if not os.path.exists(sel_cache):
+        with step_lock:
+            step_counter[0] += 1
+            update_run_state("progress",
+                             min(0.99, step_counter[0] / max(1, total_steps)))
+        return False
+
+    # ── Fill each histogram in this branch from the selection cache ──────────
+    for hcfg in histograms:
+        if get_run_state("stop"):
+            update_run_state("running", False)
+            return False
+
+        plot_idx   = hcfg.get("plot_idx", 0)
+        hist_cache = os.path.join(hdir, "output", f"h5_{hcfg['h5']}_{s}.root")
+        out_path   = os.path.join(hdir, "output", f"hist{plot_idx}_{s}.root")
+
+        if os.path.exists(hist_cache):
+            shutil.copy(hist_cache, out_path)
+            update_run_state("status_msg",
+                             f"[{idx+1}/{n_samp}] hist{plot_idx} (cache)")
+            continue
+
+        outHist = hist()
+        outHist.create(int(hcfg["bins"]), float(hcfg["min"]), float(hcfg["max"]))
+        fill_histogram_from_cache(sel_cache, outHist, hcfg["observable"],
+                                  idx, n_samp)
+        write_final_histograms(hdir, s, hcfg["h5"], outHist, out_path)
+
+    with step_lock:
+        step_counter[0] += 1
+        update_run_state("progress",
+                         min(0.99, step_counter[0] / max(1, total_steps)))
+    return True
+
+
 def run_physics_loop(cfg, samples, active_samples, en):
-    detector   = cfg["detector"]
     selections = cfg.get("selections")
 
     if not selections:
@@ -48,131 +192,41 @@ def run_physics_loop(cfg, samples, active_samples, en):
     mult_h5_base = cfg["energy"] + cfg["detector"] + str(cfg.get("mult_cuts", []))
 
     total_steps = len(selections) * len(active_samples)
-    step = 0
+    step_counter = [0]   # mutable so worker closures can increment it
+    step_lock    = threading.Lock()
     processed_any = False
 
     for sel_cfg in selections:
-        h5_sel    = sel_cfg["h5_sel"]
-        histograms = sel_cfg["histograms"]
+        # OPT-2: compile selection expressions once per selection branch,
+        # shared across all sample workers (code objects are read-only).
+        compiled_sel_exprs = [
+            compile(e, '<sel>', 'eval')
+            for e in sel_cfg.get("sel_exprs", []) if e and e.strip()
+        ]
 
-        # Build a branch-specific cfg for filter_raw_event_data (passes sel_exprs)
-        branch_cfg = dict(cfg)
-        branch_cfg["sel_exprs"] = sel_cfg["sel_exprs"]
-        branch_cfg["h5_sel"]    = h5_sel
-
-        for idx, s in enumerate(active_samples):
-            if get_run_state("stop"):
-                update_run_state("running", False)
-                return False
-
-            update_run_state("progress", float(step) / max(1, total_steps))
-            sel_cache = os.path.join(hdir, "cache", f"sel_{h5_sel}_{s}.npz")
-
-            # ── Ensure selection cache exists ────────────────────────────────
-            if not os.path.exists(sel_cache):
-                derived = False
-                sel_exprs_list = sel_cfg.get("sel_exprs", [])
-
-                # If this selection is a chain prefix (>1 expression), check whether
-                # the parent prefix cache already exists and filter it instead of
-                # re-reading the ROOT file.
-                if len(sel_exprs_list) > 1:
-                    parent_exprs = sel_exprs_list[:-1]
-                    parent_h5 = hashlib.md5(
-                        (mult_h5_base + str(parent_exprs)).encode()
-                    ).hexdigest()
-                    parent_cache = os.path.join(hdir, "cache", f"sel_{parent_h5}_{s}.npz")
-                    if os.path.exists(parent_cache):
-                        update_run_state("status_msg",
-                                         f"[{idx+1}/{len(active_samples)}] "
-                                         f"filtering from parent cache")
-                        try:
-                            filter_selection_cache(
-                                parent_cache, [sel_exprs_list[-1]], sel_cache
-                            )
-                            derived = True
-                        except Exception as err:
-                            update_run_state("status_msg",
-                                             f"Cache filter error: {err}")
-
-                if not derived:
-                    data_file = os.path.join(os.getcwd(), "datasets", detector,
-                                             cfg["energy"].replace(" ", ""), f"{s}.root")
-                    if not os.path.exists(data_file):
-                        data_file = os.path.join(hdir, "datasets", detector,
-                                                 cfg["energy"].replace(" ", ""), f"{s}.root")
-                        if not os.path.exists(data_file):
-                            update_run_state("status_msg", f"Missing data: {s}")
-                            step += 1
-                            continue
-
-                    update_run_state("status_msg",
-                                     f"Processing [{idx+1}/{len(active_samples)}]")
-                    cache_acc = make_cache_acc()
-
-                    try:
-                        with uproot.open(data_file) as f_root:
-                            tr = f_root["ntuple"]
-                            total_entries = tr.num_entries
-                            v_keys = [k for k in tr.keys()
-                                      if "pt" in k or "eta" in k or "phi" in k
-                                      or "e" in k or "weight" in k or "btag" in k
-                                      or "d0signif" in k or "z0signif" in k]
-
-                            entries_processed = 0
-                            for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
-                                if get_run_state("stop"):
-                                    update_run_state("running", False)
-                                    return False
-                                nev = len(arrays["weight"])
-                                _, _, stop_req = filter_raw_event_data(
-                                    arrays, nev, branch_cfg, None, None, None, "",
-                                    idx, len(active_samples), entries_processed, total_entries,
-                                    cache_acc=cache_acc,
-                                )
-                                if stop_req or get_run_state("stop"):
-                                    update_run_state("running", False)
-                                    return False
-                                entries_processed += nev
-                                del arrays
-                                gc.collect()
-
-                        save_cache(sel_cache, cache_acc)
-
-                    except Exception as err:
-                        update_run_state("status_msg", f"Error reading {s}: {err}")
-                        step += 1
-                        continue
-
-            if not os.path.exists(sel_cache):
-                step += 1
-                continue
-
-            processed_any = True
-
-            # ── Fill each histogram in this branch from the selection cache ──
-            for hcfg in histograms:
+        # OPT-3: process samples for this selection branch in parallel.
+        # Each sample writes to a unique cache path — no cross-sample data races.
+        n_workers = min(_MAX_WORKERS, len(active_samples))
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            futures = {
+                pool.submit(
+                    _process_sample,
+                    sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
+                    compiled_sel_exprs, step_counter, step_lock, total_steps,
+                ): s
+                for idx, s in enumerate(active_samples)
+            }
+            for fut in as_completed(futures):
                 if get_run_state("stop"):
+                    for f in futures:
+                        f.cancel()
                     update_run_state("running", False)
                     return False
-
-                plot_idx   = hcfg.get("plot_idx", 0)
-                hist_cache = os.path.join(hdir, "output", f"h5_{hcfg['h5']}_{s}.root")
-                out_path   = os.path.join(hdir, "output", f"hist{plot_idx}_{s}.root")
-
-                if os.path.exists(hist_cache):
-                    shutil.copy(hist_cache, out_path)
-                    update_run_state("status_msg",
-                                     f"[{idx+1}/{len(active_samples)}] hist{plot_idx} (cache)")
-                    continue
-
-                outHist = hist()
-                outHist.create(int(hcfg["bins"]), float(hcfg["min"]), float(hcfg["max"]))
-                fill_histogram_from_cache(sel_cache, outHist, hcfg["observable"],
-                                          idx, len(active_samples))
-                write_final_histograms(hdir, s, hcfg["h5"], outHist, out_path)
-
-            step += 1
+                try:
+                    if fut.result():
+                        processed_any = True
+                except Exception as e:
+                    update_run_state("status_msg", f"Sample error: {e}")
 
     update_run_state("progress", 1.0)
     return processed_any
