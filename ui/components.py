@@ -128,6 +128,12 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
         dpg.configure_item("btn_trigger", label="Run", enabled=True)
         if dpg.does_item_exist("ui_status_label"):
             dpg.set_value("ui_status_label", "")
+
+        # Hide worker bars and release progress_ctx reference
+        if dpg.does_item_exist("worker_bars_section"):
+            dpg.configure_item("worker_bars_section", show=False)
+        safe_set_state("progress_ctx", None)
+
         if safe_get_state("stop"):
             dpg.set_value("ui_progress_bar", 0.0)
             dpg.configure_item("ui_progress_bar", overlay="Aborted")
@@ -183,6 +189,29 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
     active    = safe_get_state("active_nodes")
     completed = safe_get_state("completed_nodes")
     apply_node_runtime_states(active, completed)
+
+    # ── Update per-worker progress bars ──────────────────────────────────────
+    ctx = safe_get_state("progress_ctx")
+    if ctx is not None and dpg.does_item_exist("worker_bars_section"):
+        n_w = ctx.get("n_workers", 1)
+        if n_w > 1:
+            with ctx["slot_lock"]:
+                w_snapshot = dict(ctx["worker_data"])
+            for _slot in range(n_w):
+                bar_tag = f"worker_bar_{_slot}"
+                lbl_tag = f"worker_label_{_slot}"
+                if not dpg.does_item_exist(bar_tag):
+                    continue
+                if _slot in w_snapshot:
+                    wd = w_snapshot[_slot]
+                    ratio = wd["done"] / wd["total"] if wd["total"] > 0 else 0.0
+                    dpg.set_value(lbl_tag, f"Worker {_slot + 1}:  {wd['sample']}")
+                    dpg.set_value(bar_tag, ratio)
+                    dpg.configure_item(bar_tag, overlay=f"{int(ratio * 100)}%")
+                else:
+                    dpg.set_value(lbl_tag, f"Worker {_slot + 1}:  --")
+                    dpg.set_value(bar_tag, 0.0)
+                    dpg.configure_item(bar_tag, overlay="")
 
     dpg.set_frame_callback(dpg.get_frame_count() + 6, _frame_poll_callback)
 
@@ -290,6 +319,23 @@ def trigger_analysis_pipeline():
     # Seed RUN_STATE node sets
     safe_set_state("active_nodes",    set())
     safe_set_state("completed_nodes", _pre_done)
+
+    # ── Show / reset per-worker bars if running with multiple workers ─────────
+    _n_w = safe_get_state("n_workers")
+    if dpg.does_item_exist("worker_bars_section"):
+        if _n_w > 1:
+            dpg.configure_item("worker_bars_section", show=True)
+            for _wi in range(8):
+                row_tag = f"worker_bar_row_{_wi}"
+                if dpg.does_item_exist(row_tag):
+                    dpg.configure_item(row_tag, show=(_wi < _n_w))
+                if dpg.does_item_exist(f"worker_label_{_wi}"):
+                    dpg.set_value(f"worker_label_{_wi}", f"Worker {_wi + 1}:  --")
+                if dpg.does_item_exist(f"worker_bar_{_wi}"):
+                    dpg.set_value(f"worker_bar_{_wi}", 0.0)
+                    dpg.configure_item(f"worker_bar_{_wi}", overlay="")
+        else:
+            dpg.configure_item("worker_bars_section", show=False)
 
     # Build selections_info for the display refresh after run
     selections = cfg.get("selections", [])

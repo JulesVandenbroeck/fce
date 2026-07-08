@@ -21,6 +21,7 @@ from PIL import Image
 from ui.graph import link_callback, delink_callback, create_node, setup_link_handlers, on_node_editor_drop
 from ui.state import REGISTRY
 from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload, MAX_HIST_TEXTURES
+from ui.state import update_run_state as _set_state
 from ui.tutorial import show_tutorial
 import ui.state as _ui_state
 from fce_studio import __version__
@@ -265,7 +266,45 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 tag="ui_status_label",
                 color=(155, 155, 155),
             )
-            dpg.add_spacer(height=2)
+            dpg.add_spacer(height=4)
+
+            # ── Worker count control ───────────────────────────────────────
+            with dpg.group(horizontal=True):
+                dpg.add_text("Workers:", color=(200, 200, 200))
+                dpg.add_spacer(width=4)
+                dpg.add_input_int(
+                    tag="ui_worker_count",
+                    default_value=4,
+                    min_value=1,
+                    max_value=8,
+                    min_clamped=True,
+                    max_clamped=True,
+                    width=70,
+                    callback=lambda s, a, u: _set_state("n_workers", max(1, min(a, 8))),
+                )
+
+            # ── Per-worker progress bars (shown only when n_workers > 1) ──
+            # Pre-create 8 rows; trigger_analysis_pipeline shows the right count.
+            with dpg.group(tag="worker_bars_section", show=False):
+                dpg.add_spacer(height=2)
+                for _wi in range(8):
+                    with dpg.group(tag=f"worker_bar_row_{_wi}",
+                                   horizontal=True, show=False):
+                        dpg.add_text(
+                            f"Worker {_wi + 1}:  --",
+                            tag=f"worker_label_{_wi}",
+                            color=(180, 180, 180),
+                        )
+                        dpg.add_progress_bar(
+                            tag=f"worker_bar_{_wi}",
+                            default_value=0.0,
+                            overlay="",
+                            width=-1,
+                            height=14,
+                        )
+                dpg.add_spacer(height=2)
+
+            dpg.add_spacer(height=4)
             dpg.add_button(
                 label="Run",
                 tag="btn_trigger",
@@ -333,6 +372,8 @@ with dpg.theme(tag="progress_bar_theme"):
         dpg.add_theme_color(dpg.mvThemeCol_PlotHistogram,
                             (40, 167, 69), category=dpg.mvThemeCat_Core)
 dpg.bind_item_theme("ui_progress_bar", "progress_bar_theme")
+for _wi in range(8):
+    dpg.bind_item_theme(f"worker_bar_{_wi}", "progress_bar_theme")
 
 # ── Bind large font to Run button ─────────────────────────────────────────────
 if _large_font is not None:

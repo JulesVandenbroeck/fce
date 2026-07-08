@@ -17,9 +17,6 @@ from paths import get_fce_home
 
 hdir = get_fce_home()
 
-# OPT-3: parallel workers per selection branch; each sample is independent
-_MAX_WORKERS = 4
-
 # Persistent event-count cache stored at the FCE home root (not inside cache/,
 # which is wiped on every startup) so counts survive across sessions.
 _EVENT_COUNTS_FILE = os.path.join(hdir, "event_counts.json")
@@ -59,10 +56,14 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
     """Process one sample for one selection branch: build cache then fill histograms.
 
     progress_ctx keys:
-      events_done    [int]  — running total events processed across all workers
-      total_events   [int]  — pre-computed denominator (fixed before processing starts)
-      samples_started [int] — sequential counter of samples that began ROOT reading
-      plock          Lock   — guards events_done and samples_started
+      tasks_done     [int]   — selections saved so far (drives overall bar)
+      tasks_total    [int]   — total (sel, sample) pairs to process
+      samples_started [int]  — sequential counter: which worker number am I?
+      plock          Lock    — guards tasks_done and samples_started
+      n_workers      int     — how many parallel slots exist
+      slot_pool      list    — available slot indices (claimed on ROOT open, freed on .npz save)
+      slot_lock      Lock    — guards slot_pool and worker_data
+      worker_data    dict    — slot -> {sample, done, total} for per-worker bar updates
     """
     n_samp = len(active_samples)
     h5_sel = sel_cfg["h5_sel"]
@@ -112,6 +113,7 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
                 return False
 
             cache_acc = make_cache_acc()
+            slot = -1
 
             try:
                 with uproot.open(data_file) as f_root:
@@ -122,49 +124,86 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
                               or "e" in k or "weight" in k or "btag" in k
                               or "d0signif" in k or "z0signif" in k]
 
-                    # Sequential counter: increments as each worker starts ROOT
-                    # reading, so the UI always shows 1/N, 2/N, ... regardless
-                    # of which sample index is processed first.
+                    # Claim a worker slot for per-worker progress bar display.
+                    # slot_pool is pre-populated with [0..n_workers-1]; we claim
+                    # the lowest available index so bars fill top-to-bottom.
+                    with progress_ctx["slot_lock"]:
+                        if progress_ctx["slot_pool"]:
+                            slot = progress_ctx["slot_pool"].pop(0)
+                            progress_ctx["worker_data"][slot] = {
+                                "sample": s, "done": 0, "total": num_entries,
+                            }
+
+                    # Sequential status counter: 1/N, 2/N, ... regardless of which
+                    # sample index started first (avoids the "Processing [4/6]" bug
+                    # where parallel workers write idx+1 out of order).
                     with progress_ctx["plock"]:
                         progress_ctx["samples_started"][0] += 1
                         sample_num = progress_ctx["samples_started"][0]
                     update_run_state("status_msg",
                                      f"Processing [{sample_num}/{n_samp}]")
 
-                    entries_processed = 0
                     for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
                         if get_run_state("stop"):
                             update_run_state("running", False)
-                            return False
+                            break
                         nev = len(arrays["weight"])
                         _, _, stop_req = filter_raw_event_data(
-                            arrays, nev, branch_cfg, None, None, None, "",
-                            idx, n_samp, entries_processed, num_entries,
+                            arrays, nev, branch_cfg, None, "",
                             cache_acc=cache_acc,
                         )
                         if stop_req or get_run_state("stop"):
                             update_run_state("running", False)
-                            return False
-                        entries_processed += nev
+                            break
 
-                        # Advance progress bar based on events processed
-                        with progress_ctx["plock"]:
-                            progress_ctx["events_done"][0] += nev
-                            tot = progress_ctx["total_events"][0]
-                            if tot > 0:
-                                update_run_state(
-                                    "progress",
-                                    min(0.78, progress_ctx["events_done"][0] / tot * 0.80),
-                                )
+                        # Update this worker's per-basket progress (drives worker bar).
+                        if slot >= 0:
+                            with progress_ctx["slot_lock"]:
+                                if slot in progress_ctx["worker_data"]:
+                                    progress_ctx["worker_data"][slot]["done"] += nev
                         del arrays
                         # OPT-5: CPython's reference counting frees `arrays` on `del`;
                         # explicit gc.collect() between baskets is unnecessary overhead.
+
+                if get_run_state("stop"):
+                    # Release slot without saving cache
+                    if slot >= 0:
+                        with progress_ctx["slot_lock"]:
+                            progress_ctx["slot_pool"].append(slot)
+                            progress_ctx["slot_pool"].sort()
+                            progress_ctx["worker_data"].pop(slot, None)
+                    update_run_state("running", False)
+                    return False
 
                 save_cache(sel_cache, cache_acc)
 
             except Exception as err:
                 update_run_state("status_msg", f"Error reading {s}: {err}")
+                if slot >= 0:
+                    with progress_ctx["slot_lock"]:
+                        progress_ctx["slot_pool"].append(slot)
+                        progress_ctx["slot_pool"].sort()
+                        progress_ctx["worker_data"].pop(slot, None)
                 return False
+
+            # Release worker slot after selection cache is saved so another
+            # queued sample can immediately claim it for ROOT reading.
+            if slot >= 0:
+                with progress_ctx["slot_lock"]:
+                    progress_ctx["slot_pool"].append(slot)
+                    progress_ctx["slot_pool"].sort()
+                    progress_ctx["worker_data"].pop(slot, None)
+
+        # Selection cache newly created (derived or from ROOT) — advance overall bar.
+        if os.path.exists(sel_cache):
+            with progress_ctx["plock"]:
+                progress_ctx["tasks_done"][0] += 1
+                tot = progress_ctx["tasks_total"][0]
+                if tot > 0:
+                    update_run_state(
+                        "progress",
+                        min(0.78, progress_ctx["tasks_done"][0] / tot * 0.78),
+                    )
 
     if not os.path.exists(sel_cache):
         return False
@@ -187,8 +226,7 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
 
         outHist = hist()
         outHist.create(int(hcfg["bins"]), float(hcfg["min"]), float(hcfg["max"]))
-        fill_histogram_from_cache(sel_cache, outHist, hcfg["observable"],
-                                  idx, n_samp)
+        fill_histogram_from_cache(sel_cache, outHist, hcfg["observable"])
         write_final_histograms(hdir, s, hcfg["h5"], outHist, out_path)
 
     return True
@@ -213,49 +251,59 @@ def run_physics_loop(cfg, samples, active_samples, en):
     os.makedirs(os.path.join(hdir, "cache"),  exist_ok=True)
     os.makedirs(os.path.join(hdir, "output"), exist_ok=True)
 
-    # Pre-compute the multiplicity component of the cache key (matches compile_graph_topology)
     mult_h5_base = cfg["energy"] + cfg["detector"] + str(cfg.get("mult_cuts", []))
 
-    # ── Pre-compute total events for progress denominator ────────────────────
-    # For each non-cached (selection, sample) pair we need to know num_entries
-    # BEFORE processing starts so the denominator never changes mid-run (which
-    # would cause the bar to go backwards when the ratio drops).
-    #
-    # Priority:
-    #   1. event_counts.json populated by the downloader (zero I/O).
-    #   2. Quick ROOT header scan — uproot reads TTree metadata in microseconds,
-    #      without iterating any events.  Result is NOT saved to disk; that is
-    #      the downloader's job.
+    # ── Number of parallel workers (user-configurable via UI spinner) ─────────
+    n_workers = max(1, min(get_run_state("n_workers"), len(active_samples)))
+
+    # ── Pre-compute event totals for worker bar denominators ─────────────────
+    # Priority: download-time cache → quick ROOT header scan (no event iteration).
+    # The denominator is fixed before any worker starts to prevent mid-run ratio drops.
     event_counts = _load_event_counts()
     ec_prefix = f"{cfg['detector']}_{cfg['energy'].replace(' ', '')}_"
 
-    total_events_init = 0
     header_cache: dict[str, int] = {}   # s -> num_entries, avoids re-opening per selection
-    for sel_cfg in selections:
-        h5_sel = sel_cfg["h5_sel"]
-        for s in active_samples:
-            sel_cache = os.path.join(hdir, "cache", f"sel_{h5_sel}_{s}.npz")
-            if not os.path.exists(sel_cache):
-                cnt = event_counts.get(ec_prefix + s, 0)
-                if cnt == 0 and s not in header_cache:
-                    # Fall back to ROOT header scan (fast, no event iteration)
-                    data_file = _find_data_file(cfg, s)
-                    if data_file:
-                        try:
-                            with uproot.open(data_file) as f:
-                                header_cache[s] = f["ntuple"].num_entries
-                        except Exception:
-                            header_cache[s] = 0
-                if cnt == 0:
-                    cnt = header_cache.get(s, 0)
-                total_events_init += cnt
+    for s in active_samples:
+        cnt = event_counts.get(ec_prefix + s, 0)
+        if cnt == 0:
+            data_file = _find_data_file(cfg, s)
+            if data_file:
+                try:
+                    with uproot.open(data_file) as f:
+                        header_cache[s] = f["ntuple"].num_entries
+                except Exception:
+                    header_cache[s] = 0
+        else:
+            header_cache[s] = cnt
+
+    # ── Task-completion progress: count (sel, sample) pairs ──────────────────
+    # tasks_total = all pairs; tasks_pre_cached = pairs whose cache already exists.
+    tasks_total = len(selections) * len(active_samples)
+    tasks_pre_cached = sum(
+        1
+        for sel_cfg in selections
+        for s in active_samples
+        if os.path.exists(os.path.join(hdir, "cache", f"sel_{sel_cfg['h5_sel']}_{s}.npz"))
+    )
 
     progress_ctx = {
-        "events_done":     [0],
-        "total_events":    [total_events_init],
+        "tasks_done":      [tasks_pre_cached],
+        "tasks_total":     [tasks_total],
         "samples_started": [0],
         "plock":           threading.Lock(),
+        "n_workers":       n_workers,
+        "slot_pool":       list(range(n_workers)),
+        "slot_lock":       threading.Lock(),
+        "worker_data":     {},   # slot -> {sample, done, total}
     }
+
+    # Expose to main-thread poller via RUN_STATE so it can update DPG worker bars.
+    update_run_state("progress_ctx", progress_ctx)
+
+    # Set initial overall progress to reflect pre-cached work.
+    if tasks_total > 0:
+        update_run_state("progress", tasks_pre_cached / tasks_total * 0.78)
+
     processed_any = False
 
     for sel_cfg in selections:
@@ -269,8 +317,6 @@ def run_physics_loop(cfg, samples, active_samples, en):
             for e in sel_cfg.get("sel_exprs", []) if e and e.strip()
         ]
 
-        # Check if all selection-level caches already exist so we can
-        # show the right visual state immediately (avoid false "active" flash).
         h5_sel = sel_cfg["h5_sel"]
         all_cached = all(
             os.path.exists(os.path.join(hdir, "cache", f"sel_{h5_sel}_{s}.npz"))
@@ -287,7 +333,6 @@ def run_physics_loop(cfg, samples, active_samples, en):
 
         # OPT-3: process samples for this selection branch in parallel.
         # Each sample writes to a unique cache path — no cross-sample data races.
-        n_workers = min(_MAX_WORKERS, len(active_samples))
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             futures = {
                 pool.submit(
