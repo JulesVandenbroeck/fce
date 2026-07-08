@@ -675,6 +675,10 @@ def delete_node(nid: int, _push_undo: bool = True):
     for lid in dead:
         start, _ = REGISTRY.links.pop(lid)
         REGISTRY.connections.pop(start, None)
+        # DPG does not auto-remove link items when a node is deleted; orphaned
+        # link items referencing the deleted attributes cause a DPG crash.
+        if dpg.does_item_exist(lid):
+            dpg.delete_item(lid)
 
     for k in list(REGISTRY.slot_node):
         if REGISTRY.slot_node[k] == nid:

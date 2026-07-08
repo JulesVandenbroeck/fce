@@ -28,14 +28,18 @@ from fce_studio import __version__
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# ── Clear caches from previous sessions ───────────────────────────────────────
-# Best-effort: a stale/unwritable cache must never block startup.
+# ── Clear output from previous sessions ───────────────────────────────────────
+# Selection caches (cache/*.npz) are content-addressed by a hash of the
+# expressions and settings, so they are safe to reuse across sessions and are
+# NOT wiped here.  Only the positional output files (hist{N}_*.root) are wiped
+# because they use index-based names that can mis-match a new graph layout.
+# Best-effort: a stale/unwritable directory must never block startup.
 try:
     _FCE_DIR = get_fce_home()
     for _cache_subdir in ("cache", "output"):
         _d = os.path.join(_FCE_DIR, _cache_subdir)
         try:
-            if os.path.exists(_d):
+            if _cache_subdir == "output" and os.path.exists(_d):
                 shutil.rmtree(_d)
             os.makedirs(_d, exist_ok=True)
         except OSError:
