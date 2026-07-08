@@ -63,6 +63,8 @@ Nodes are connected left-to-right in a strict hierarchy enforced by `NODE_HIERAR
 
 Multiplicity and Selection nodes can be chained to themselves (AND logic). Multiple Observable nodes may share one Selection (fan-out). Multiple Histogram nodes may share one Observable (fan-out). Only one DataSource is allowed.
 
+Multiple Selection nodes may attach to the same Multiplicity node (independent branches). Each branch gets its own selection-level `.npz` cache keyed by its expression set. When Selection_B is AND-chained from Selection_A and Selection_A also fans out to an Observable, Selection_B's cache is derived from Selection_A's cache (filtered with the additional expression) rather than re-reading ROOT.
+
 ## Physics variables (expressions)
 
 Available in Selection and Observable nodes:
@@ -85,7 +87,7 @@ Available in Selection and Observable nodes:
    - Reads `config/samples.json` for the active sample list at the selected energy.
    - `run_physics_loop()` iterates ROOT files with `uproot`, applying cuts via `filter_raw_event_data()`.
    - Two-level cache: selection-level `.npz` cache and histogram-level `.root` cache avoid re-processing.
-   - `render_plots()` produces one PNG per histogram config (`hist_{i}.png`), loaded into separate DPG texture buffers. A single histogram shows as a full-width image; multiple histograms appear in collapsing headers (hidden by default), labelled by custom node name or "Histogram N".
+   - `render_plots()` produces one PNG per histogram config (`hist_{i}.png`), loaded into separate DPG texture buffers. A single selection with one histogram shows as a full-width image; multiple selections each appear under a collapsing header labelled by the Selection node's custom name (open by default). Within a selection, multiple histograms are stacked without an inner dropdown.
    - Optional `run_fit()` computes signal strength mu and significance via `pyhf`.
 7. `_frame_poll_callback()` polls state every 6 frames, updating the progress bar and canvas.
 
