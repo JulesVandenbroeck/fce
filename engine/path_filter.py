@@ -171,6 +171,67 @@ def save_cache(cache_file: str, acc: dict):
     np.savez_compressed(cache_file, **arrays)
 
 
+def filter_selection_cache(parent_cache_path: str, additional_exprs: list,
+                           output_cache_path: str):
+    """Build a child selection cache by applying additional expressions to a parent cache.
+
+    Used when the parent prefix cache already exists on disk (e.g. sel_[hash_A]_s.npz)
+    so we only need to apply the new expression rather than re-reading the ROOT file.
+    """
+    data = np.load(parent_cache_path)
+    n = len(data["weight"])
+    acc = make_cache_acc()
+    _NULL = _P()
+
+    for i in range(n):
+        try:
+            l1  = _obj_from_cache(data, i, "l1",  ["eta", "phi", "e", "d0", "z0"])
+            l2  = _obj_from_cache(data, i, "l2",  ["eta", "phi", "e", "d0", "z0"])
+            j1  = _obj_from_cache(data, i, "j1",  ["eta", "phi", "e", "btag"])
+            j2  = _obj_from_cache(data, i, "j2",  ["eta", "phi", "e", "btag"])
+            ph1 = (_obj_from_cache(data, i, "ph1", ["eta", "phi", "e"])
+                   if "ph1_pt" in data else _NULL)
+            ph2 = (_obj_from_cache(data, i, "ph2", ["eta", "phi", "e"])
+                   if "ph2_pt" in data else _NULL)
+            met_pt = float(data["met_pt"][i])
+            met_p4 = vector.obj(pt=met_pt, eta=float(data["met_eta"][i]),
+                                phi=float(data["met_phi"][i]), e=float(data["met_e"][i]))
+            met    = _P(pt=met_pt, eta=float(data["met_eta"][i]),
+                        phi=float(data["met_phi"][i]), e=float(data["met_e"][i]), p4=met_p4)
+            local_vars = {
+                "nlep": int(data["nlep"][i]), "nel": int(data["nel"][i]),
+                "nmu":  int(data["nmu"][i]),  "njets": int(data["njets"][i]),
+                "nphot": int(data["nphot"][i]) if "nphot" in data else 0,
+                "l1": l1, "l2": l2, "j1": j1, "j2": j2,
+                "ph1": ph1, "ph2": ph2, "met": met,
+                "deltaR": _delta_r,
+            }
+            skip = False
+            for expr in additional_exprs:
+                if not expr:
+                    continue
+                try:
+                    if not eval(expr, {"__builtins__": _SAFE_BUILTINS}, local_vars):
+                        skip = True
+                        break
+                except Exception:
+                    skip = True
+                    break
+            if skip:
+                continue
+            nel  = int(data["nel"][i])
+            nmu  = int(data["nmu"][i])
+            _append_event(acc,
+                          nel + nmu, nel, nmu,
+                          int(data["njets"][i]),
+                          int(data["nphot"][i]) if "nphot" in data else 0,
+                          l1, l2, j1, j2, ph1, ph2, met, float(data["weight"][i]))
+        except Exception:
+            continue
+
+    save_cache(output_cache_path, acc)
+
+
 def _obj_from_cache(data, i, prefix, keys, extra=None) -> _P:
     """Reconstruct a _P physics object from a loaded .npz cache."""
     pt = float(data[f"{prefix}_pt"][i])

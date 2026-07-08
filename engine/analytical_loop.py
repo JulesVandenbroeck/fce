@@ -1,3 +1,4 @@
+import hashlib
 import os
 import gc
 import shutil
@@ -6,7 +7,7 @@ import boost_histogram as bh
 
 from ui.state import get_run_state, update_run_state
 from engine.path_filter import (filter_raw_event_data, fill_histogram_from_cache,
-                                  make_cache_acc, save_cache)
+                                  make_cache_acc, save_cache, filter_selection_cache)
 from engine.path_final import write_final_histograms
 
 from paths import get_fce_home
@@ -43,6 +44,9 @@ def run_physics_loop(cfg, samples, active_samples, en):
     os.makedirs(os.path.join(hdir, "cache"),  exist_ok=True)
     os.makedirs(os.path.join(hdir, "output"), exist_ok=True)
 
+    # Pre-compute the multiplicity component of the cache key (matches compile_graph_topology)
+    mult_h5_base = cfg["energy"] + cfg["detector"] + str(cfg.get("mult_cuts", []))
+
     total_steps = len(selections) * len(active_samples)
     step = 0
     processed_any = False
@@ -66,53 +70,79 @@ def run_physics_loop(cfg, samples, active_samples, en):
 
             # ── Ensure selection cache exists ────────────────────────────────
             if not os.path.exists(sel_cache):
-                data_file = os.path.join(os.getcwd(), "datasets", detector,
-                                         cfg["energy"].replace(" ", ""), f"{s}.root")
-                if not os.path.exists(data_file):
-                    data_file = os.path.join(hdir, "datasets", detector,
+                derived = False
+                sel_exprs_list = sel_cfg.get("sel_exprs", [])
+
+                # If this selection is a chain prefix (>1 expression), check whether
+                # the parent prefix cache already exists and filter it instead of
+                # re-reading the ROOT file.
+                if len(sel_exprs_list) > 1:
+                    parent_exprs = sel_exprs_list[:-1]
+                    parent_h5 = hashlib.md5(
+                        (mult_h5_base + str(parent_exprs)).encode()
+                    ).hexdigest()
+                    parent_cache = os.path.join(hdir, "cache", f"sel_{parent_h5}_{s}.npz")
+                    if os.path.exists(parent_cache):
+                        update_run_state("status_msg",
+                                         f"[{idx+1}/{len(active_samples)}] "
+                                         f"filtering from parent cache")
+                        try:
+                            filter_selection_cache(
+                                parent_cache, [sel_exprs_list[-1]], sel_cache
+                            )
+                            derived = True
+                        except Exception as err:
+                            update_run_state("status_msg",
+                                             f"Cache filter error: {err}")
+
+                if not derived:
+                    data_file = os.path.join(os.getcwd(), "datasets", detector,
                                              cfg["energy"].replace(" ", ""), f"{s}.root")
                     if not os.path.exists(data_file):
-                        update_run_state("status_msg", f"Missing data: {s}")
+                        data_file = os.path.join(hdir, "datasets", detector,
+                                                 cfg["energy"].replace(" ", ""), f"{s}.root")
+                        if not os.path.exists(data_file):
+                            update_run_state("status_msg", f"Missing data: {s}")
+                            step += 1
+                            continue
+
+                    update_run_state("status_msg",
+                                     f"Processing [{idx+1}/{len(active_samples)}]")
+                    cache_acc = make_cache_acc()
+
+                    try:
+                        with uproot.open(data_file) as f_root:
+                            tr = f_root["ntuple"]
+                            total_entries = tr.num_entries
+                            v_keys = [k for k in tr.keys()
+                                      if "pt" in k or "eta" in k or "phi" in k
+                                      or "e" in k or "weight" in k or "btag" in k
+                                      or "d0signif" in k or "z0signif" in k]
+
+                            entries_processed = 0
+                            for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
+                                if get_run_state("stop"):
+                                    update_run_state("running", False)
+                                    return False
+                                nev = len(arrays["weight"])
+                                _, _, stop_req = filter_raw_event_data(
+                                    arrays, nev, branch_cfg, None, None, None, "",
+                                    idx, len(active_samples), entries_processed, total_entries,
+                                    cache_acc=cache_acc,
+                                )
+                                if stop_req or get_run_state("stop"):
+                                    update_run_state("running", False)
+                                    return False
+                                entries_processed += nev
+                                del arrays
+                                gc.collect()
+
+                        save_cache(sel_cache, cache_acc)
+
+                    except Exception as err:
+                        update_run_state("status_msg", f"Error reading {s}: {err}")
                         step += 1
                         continue
-
-                update_run_state("status_msg",
-                                 f"Processing [{idx+1}/{len(active_samples)}]")
-                cache_acc = make_cache_acc()
-
-                try:
-                    with uproot.open(data_file) as f_root:
-                        tr = f_root["ntuple"]
-                        total_entries = tr.num_entries
-                        v_keys = [k for k in tr.keys()
-                                  if "pt" in k or "eta" in k or "phi" in k
-                                  or "e" in k or "weight" in k or "btag" in k
-                                  or "d0signif" in k or "z0signif" in k]
-
-                        entries_processed = 0
-                        for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
-                            if get_run_state("stop"):
-                                update_run_state("running", False)
-                                return False
-                            nev = len(arrays["weight"])
-                            _, _, stop_req = filter_raw_event_data(
-                                arrays, nev, branch_cfg, None, None, None, "",
-                                idx, len(active_samples), entries_processed, total_entries,
-                                cache_acc=cache_acc,
-                            )
-                            if stop_req or get_run_state("stop"):
-                                update_run_state("running", False)
-                                return False
-                            entries_processed += nev
-                            del arrays
-                            gc.collect()
-
-                    save_cache(sel_cache, cache_acc)
-
-                except Exception as err:
-                    update_run_state("status_msg", f"Error reading {s}: {err}")
-                    step += 1
-                    continue
 
             if not os.path.exists(sel_cache):
                 step += 1
