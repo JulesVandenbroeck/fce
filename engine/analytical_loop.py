@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 import shutil
@@ -10,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from ui.state import (get_run_state, update_run_state,
                       add_active_node, add_completed_node, mark_nodes_completed)
 from engine.path_filter import (filter_raw_event_data, fill_histogram_from_cache,
-                                  make_cache_acc, save_cache, filter_selection_cache)
+                                  make_cache_acc, save_cache)
 from engine.path_final import write_final_histograms
 
 from paths import get_fce_home
@@ -51,7 +50,7 @@ class hist:
         self.h["h"] = bh.Histogram(ax)
 
 
-def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
+def _process_sample(sel_cfg, s, idx, active_samples, cfg,
                     compiled_sel_exprs, progress_ctx):
     """Process one sample for one selection branch: build cache then fill histograms.
 
@@ -80,143 +79,95 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
     sel_cache = os.path.join(hdir, "cache", f"sel_{h5_sel}_{s}.npz")
 
     # ── Ensure selection cache exists ────────────────────────────────────────
+    # Always read from ROOT with ALL combined expressions ([expr_A, expr_B, ...]).
+    # Chained selections have the full expression list compiled into sel_exprs by
+    # compile_graph_topology, so there is no need to derive from a parent cache.
+    # This ensures every worker reads its own ROOT file independently and all N
+    # workers run in true parallel for every selection branch.
     if not os.path.exists(sel_cache):
-        derived = False
-        sel_exprs_list = sel_cfg.get("sel_exprs", [])
-        slot = -1   # worker slot claimed for this sample; -1 = not yet claimed
+        slot = -1  # worker slot index; -1 = not yet claimed
 
-        # If this selection is a chain prefix (>1 expression), check whether
-        # the parent prefix cache already exists and derive from it instead of
-        # re-reading the ROOT file.  The vectorized fast path in
-        # filter_selection_cache releases the GIL (numpy ops) so multiple workers
-        # run truly in parallel even here.
-        if len(sel_exprs_list) > 1:
-            parent_exprs = sel_exprs_list[:-1]
-            parent_h5 = hashlib.md5(
-                (mult_h5_base + str(parent_exprs)).encode()
-            ).hexdigest()
-            parent_cache = os.path.join(hdir, "cache", f"sel_{parent_h5}_{s}.npz")
-            if os.path.exists(parent_cache):
-                # Claim a slot so the worker bar shows this sample as active
-                # during derivation.  total=1 / done=0 shows as 0%; bar clears
-                # when the slot is released after filter_selection_cache returns.
+        data_file = _find_data_file(cfg, s)
+        if data_file is None:
+            update_run_state("status_msg", f"Missing data: {s}")
+            return False
+
+        cache_acc = make_cache_acc()
+        try:
+            with uproot.open(data_file) as f_root:
+                tr = f_root["ntuple"]
+                num_entries = tr.num_entries
+                v_keys = [k for k in tr.keys()
+                          if "pt" in k or "eta" in k or "phi" in k
+                          or "e" in k or "weight" in k or "btag" in k
+                          or "d0signif" in k or "z0signif" in k]
+
+                # Claim the lowest free slot so bars fill top-to-bottom.
                 with progress_ctx["slot_lock"]:
                     if progress_ctx["slot_pool"]:
                         slot = progress_ctx["slot_pool"].pop(0)
                         progress_ctx["worker_data"][slot] = {
-                            "sample": s, "done": 0, "total": 1,
+                            "sample": s, "done": 0, "total": num_entries,
                         }
+
+                # Sequential counter so status shows 1/N, 2/N, ... in the
+                # order workers actually open ROOT files (not static sample index).
                 with progress_ctx["plock"]:
                     progress_ctx["samples_started"][0] += 1
                     sample_num = progress_ctx["samples_started"][0]
-                update_run_state("status_msg", f"Processing [{sample_num}/{n_samp}]")
-                try:
-                    last_expr = sel_exprs_list[-1]
-                    compiled_last = ([compile(last_expr, '<sel>', 'eval')]
-                                     if last_expr else [])
-                    filter_selection_cache(
-                        parent_cache, [last_expr], sel_cache,
-                        compiled_exprs=compiled_last,
+                update_run_state("status_msg",
+                                 f"Processing [{sample_num}/{n_samp}]")
+
+                for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
+                    if get_run_state("stop"):
+                        update_run_state("running", False)
+                        break
+                    nev = len(arrays["weight"])
+                    _, _, stop_req = filter_raw_event_data(
+                        arrays, nev, branch_cfg, None, "",
+                        cache_acc=cache_acc,
                     )
-                    derived = True
-                except Exception as err:
-                    update_run_state("status_msg", f"Cache filter error: {err}")
-                finally:
+                    if stop_req or get_run_state("stop"):
+                        update_run_state("running", False)
+                        break
+
+                    # Per-basket: update this worker's progress in the UI bar.
                     if slot >= 0:
                         with progress_ctx["slot_lock"]:
-                            progress_ctx["slot_pool"].append(slot)
-                            progress_ctx["slot_pool"].sort()
-                            progress_ctx["worker_data"].pop(slot, None)
-                        slot = -1
+                            if slot in progress_ctx["worker_data"]:
+                                progress_ctx["worker_data"][slot]["done"] += nev
+                    del arrays
+                    # OPT-5: CPython reference-counting frees arrays immediately;
+                    # explicit gc.collect() between baskets is unnecessary overhead.
 
-        if not derived:
-            data_file = _find_data_file(cfg, s)
-            if data_file is None:
-                update_run_state("status_msg", f"Missing data: {s}")
-                return False
-
-            cache_acc = make_cache_acc()
-
-            try:
-                with uproot.open(data_file) as f_root:
-                    tr = f_root["ntuple"]
-                    num_entries = tr.num_entries
-                    v_keys = [k for k in tr.keys()
-                              if "pt" in k or "eta" in k or "phi" in k
-                              or "e" in k or "weight" in k or "btag" in k
-                              or "d0signif" in k or "z0signif" in k]
-
-                    # Claim a worker slot for per-worker progress bar display.
-                    # slot_pool is pre-populated with [0..n_workers-1]; we claim
-                    # the lowest available index so bars fill top-to-bottom.
-                    with progress_ctx["slot_lock"]:
-                        if progress_ctx["slot_pool"]:
-                            slot = progress_ctx["slot_pool"].pop(0)
-                            progress_ctx["worker_data"][slot] = {
-                                "sample": s, "done": 0, "total": num_entries,
-                            }
-
-                    # Sequential status counter: 1/N, 2/N, ... regardless of which
-                    # sample index started first (avoids the "Processing [4/6]" bug
-                    # where parallel workers write idx+1 out of order).
-                    with progress_ctx["plock"]:
-                        progress_ctx["samples_started"][0] += 1
-                        sample_num = progress_ctx["samples_started"][0]
-                    update_run_state("status_msg",
-                                     f"Processing [{sample_num}/{n_samp}]")
-
-                    for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
-                        if get_run_state("stop"):
-                            update_run_state("running", False)
-                            break
-                        nev = len(arrays["weight"])
-                        _, _, stop_req = filter_raw_event_data(
-                            arrays, nev, branch_cfg, None, "",
-                            cache_acc=cache_acc,
-                        )
-                        if stop_req or get_run_state("stop"):
-                            update_run_state("running", False)
-                            break
-
-                        # Update this worker's per-basket progress (drives worker bar).
-                        if slot >= 0:
-                            with progress_ctx["slot_lock"]:
-                                if slot in progress_ctx["worker_data"]:
-                                    progress_ctx["worker_data"][slot]["done"] += nev
-                        del arrays
-                        # OPT-5: CPython's reference counting frees `arrays` on `del`;
-                        # explicit gc.collect() between baskets is unnecessary overhead.
-
-                if get_run_state("stop"):
-                    # Release slot without saving cache
-                    if slot >= 0:
-                        with progress_ctx["slot_lock"]:
-                            progress_ctx["slot_pool"].append(slot)
-                            progress_ctx["slot_pool"].sort()
-                            progress_ctx["worker_data"].pop(slot, None)
-                    update_run_state("running", False)
-                    return False
-
-                save_cache(sel_cache, cache_acc)
-
-            except Exception as err:
-                update_run_state("status_msg", f"Error reading {s}: {err}")
+            if get_run_state("stop"):
                 if slot >= 0:
                     with progress_ctx["slot_lock"]:
                         progress_ctx["slot_pool"].append(slot)
                         progress_ctx["slot_pool"].sort()
                         progress_ctx["worker_data"].pop(slot, None)
+                update_run_state("running", False)
                 return False
 
-            # Release worker slot after selection cache is saved so another
-            # queued sample can immediately claim it for ROOT reading.
+            save_cache(sel_cache, cache_acc)
+
+        except Exception as err:
+            update_run_state("status_msg", f"Error reading {s}: {err}")
             if slot >= 0:
                 with progress_ctx["slot_lock"]:
                     progress_ctx["slot_pool"].append(slot)
                     progress_ctx["slot_pool"].sort()
                     progress_ctx["worker_data"].pop(slot, None)
+            return False
 
-        # Selection cache newly created (derived or from ROOT) — advance overall bar.
+        # Release slot after .npz is saved so queued samples can claim it.
+        if slot >= 0:
+            with progress_ctx["slot_lock"]:
+                progress_ctx["slot_pool"].append(slot)
+                progress_ctx["slot_pool"].sort()
+                progress_ctx["worker_data"].pop(slot, None)
+
+        # Advance overall bar by one completed (selection, sample) task.
         if os.path.exists(sel_cache):
             with progress_ctx["plock"]:
                 progress_ctx["tasks_done"][0] += 1
@@ -272,8 +223,6 @@ def run_physics_loop(cfg, samples, active_samples, en):
 
     os.makedirs(os.path.join(hdir, "cache"),  exist_ok=True)
     os.makedirs(os.path.join(hdir, "output"), exist_ok=True)
-
-    mult_h5_base = cfg["energy"] + cfg["detector"] + str(cfg.get("mult_cuts", []))
 
     # ── Number of parallel workers (user-configurable via UI spinner) ─────────
     n_workers = max(1, min(get_run_state("n_workers"), len(active_samples)))
@@ -359,7 +308,7 @@ def run_physics_loop(cfg, samples, active_samples, en):
             futures = {
                 pool.submit(
                     _process_sample,
-                    sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
+                    sel_cfg, s, idx, active_samples, cfg,
                     compiled_sel_exprs, progress_ctx,
                 ): s
                 for idx, s in enumerate(active_samples)
