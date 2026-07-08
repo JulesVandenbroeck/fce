@@ -85,8 +85,8 @@ Available in Selection and Observable nodes:
 5. `compile_graph_topology()` serializes the node graph to a `cfg` dict.
 6. `execute_analysis(cfg)` runs in a background thread:
    - Reads `config/samples.json` for the active sample list at the selected energy.
-   - `run_physics_loop()` iterates ROOT files with `uproot`, applying cuts via `filter_raw_event_data()`.
-   - Two-level cache: selection-level `.npz` cache and histogram-level `.root` cache avoid re-processing.
+   - `run_physics_loop()` iterates ROOT files with `uproot`, applying cuts via `filter_raw_event_data()`. Selection expressions are pre-compiled with `compile()` once per selection branch and passed as code objects, avoiding repeated AST parsing per event. Samples within a selection branch are processed in parallel via `ThreadPoolExecutor` (up to 4 workers); each sample writes to a unique cache path so workers never conflict.
+   - Two-level cache: selection-level `.npz` cache (accumulated with pre-allocated numpy float32 arrays, ~9× less RAM than Python lists) and histogram-level `.root` cache avoid re-processing. Cache arrays are loaded with `mmap_mode='r'` so the OS pages in only the columns accessed by the observable expression.
    - `render_plots()` produces one PNG per histogram config (`hist_{i}.png`), loaded into separate DPG texture buffers. A single selection with one histogram shows as a full-width image; multiple selections each appear under a collapsing header labelled by the Selection node's custom name (open by default). Within a selection, multiple histograms are stacked without an inner dropdown.
    - Optional `run_fit()` computes signal strength mu and significance via `pyhf`.
 7. `_frame_poll_callback()` polls state every 6 frames, updating the progress bar and canvas.
