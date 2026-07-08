@@ -327,6 +327,13 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     pass
                 dpg.add_spacer(width=8)
 
+# ── Progress bar green theme ──────────────────────────────────────────────────
+with dpg.theme(tag="progress_bar_theme"):
+    with dpg.theme_component(dpg.mvProgressBar):
+        dpg.add_theme_color(dpg.mvThemeCol_PlotHistogram,
+                            (40, 167, 69), category=dpg.mvThemeCat_Core)
+dpg.bind_item_theme("ui_progress_bar", "progress_bar_theme")
+
 # ── Bind large font to Run button ─────────────────────────────────────────────
 if _large_font is not None:
     dpg.bind_item_font("btn_trigger", _large_font)

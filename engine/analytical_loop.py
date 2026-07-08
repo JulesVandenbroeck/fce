@@ -35,19 +35,6 @@ def _load_event_counts() -> dict:
     return {}
 
 
-def _save_event_counts(counts: dict, file_lock: threading.Lock):
-    """Atomically write the event-count cache to disk (POSIX rename)."""
-    tmp = _EVENT_COUNTS_FILE + ".tmp"
-    try:
-        os.makedirs(os.path.dirname(_EVENT_COUNTS_FILE), exist_ok=True)
-        with file_lock:
-            with open(tmp, "w") as f:
-                json.dump(counts, f)
-            os.replace(tmp, _EVENT_COUNTS_FILE)
-    except Exception:
-        pass
-
-
 class hist:
     def __init__(self):
         self.h = {}
@@ -63,11 +50,9 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
 
     progress_ctx keys:
       events_done   [int]  — running total events processed (mutable list)
-      total_events  [int]  — total events to read across non-cached pairs (mutable)
-      event_counts  dict   — in-memory copy of the event-count JSON cache
+      total_events  [int]  — total events to read across non-cached pairs (pre-loaded)
       plock         Lock   — guards events_done / total_events
-      flock         Lock   — serialises event_counts.json writes
-      key_prefix    str    — "{detector}_{energy_nospaces}_"
+      key_prefix    str    — "{detector}_{energy_nospaces}_" (unused at runtime)
     """
     n_samp = len(active_samples)
     h5_sel = sel_cfg["h5_sel"]
@@ -133,16 +118,6 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
                               if "pt" in k or "eta" in k or "phi" in k
                               or "e" in k or "weight" in k or "btag" in k
                               or "d0signif" in k or "z0signif" in k]
-
-                    # Register this sample's event count and update progress denominator.
-                    ec_key = progress_ctx["key_prefix"] + s
-                    with progress_ctx["plock"]:
-                        old_cnt = progress_ctx["event_counts"].get(ec_key, 0)
-                        if old_cnt == 0:
-                            # First time seeing this sample: add to denominator
-                            progress_ctx["total_events"][0] += num_entries
-                        progress_ctx["event_counts"][ec_key] = num_entries
-                    _save_event_counts(progress_ctx["event_counts"], progress_ctx["flock"])
 
                     entries_processed = 0
                     for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
@@ -246,10 +221,8 @@ def run_physics_loop(cfg, samples, active_samples, en):
     progress_ctx = {
         "events_done":  [0],
         "total_events": [total_events_init],
-        "event_counts": event_counts,
-        "plock": threading.Lock(),   # progress numerator/denominator
-        "flock": threading.Lock(),   # event_counts.json file writes
-        "key_prefix": ec_prefix,
+        "plock":        threading.Lock(),
+        "key_prefix":   ec_prefix,
     }
     processed_any = False
 
