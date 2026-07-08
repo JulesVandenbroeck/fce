@@ -6,7 +6,8 @@ import uproot
 import boost_histogram as bh
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ui.state import get_run_state, update_run_state
+from ui.state import (get_run_state, update_run_state,
+                      add_active_node, add_completed_node, mark_nodes_completed)
 from engine.path_filter import (filter_raw_event_data, fill_histogram_from_cache,
                                   make_cache_acc, save_cache, filter_selection_cache)
 from engine.path_final import write_final_histograms
@@ -86,7 +87,7 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
                         step_counter[0] += 1
                         update_run_state(
                             "progress",
-                            min(0.99, step_counter[0] / max(1, total_steps)),
+                            min(0.78, step_counter[0] / max(1, total_steps) * 0.80),
                         )
                     return False
 
@@ -165,7 +166,7 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
     with step_lock:
         step_counter[0] += 1
         update_run_state("progress",
-                         min(0.99, step_counter[0] / max(1, total_steps)))
+                         min(0.78, step_counter[0] / max(1, total_steps) * 0.80))
     return True
 
 
@@ -197,12 +198,31 @@ def run_physics_loop(cfg, samples, active_samples, en):
     processed_any = False
 
     for sel_cfg in selections:
+        sel_nid  = sel_cfg.get("nid")
+        sel_name = sel_cfg.get("node_name", "")
+
         # OPT-2: compile selection expressions once per selection branch,
         # shared across all sample workers (code objects are read-only).
         compiled_sel_exprs = [
             compile(e, '<sel>', 'eval')
             for e in sel_cfg.get("sel_exprs", []) if e and e.strip()
         ]
+
+        # Check if all selection-level caches already exist so we can
+        # show the right visual state immediately (avoid false "active" flash).
+        h5_sel = sel_cfg["h5_sel"]
+        all_cached = all(
+            os.path.exists(os.path.join(hdir, "cache", f"sel_{h5_sel}_{s}.npz"))
+            for s in active_samples
+        )
+
+        if sel_nid is not None:
+            if all_cached:
+                add_completed_node(sel_nid)
+            else:
+                add_active_node(sel_nid)
+                update_run_state("current_phase",
+                                 f"Processing: {sel_name}" if sel_name else "Filtering events...")
 
         # OPT-3: process samples for this selection branch in parallel.
         # Each sample writes to a unique cache path — no cross-sample data races.
@@ -228,5 +248,15 @@ def run_physics_loop(cfg, samples, active_samples, en):
                 except Exception as e:
                     update_run_state("status_msg", f"Sample error: {e}")
 
-    update_run_state("progress", 1.0)
+        # Mark this selection and all its observable/histogram nodes as done
+        if sel_nid is not None:
+            nids_to_complete = {sel_nid}
+            for hcfg in sel_cfg.get("histograms", []):
+                if hcfg.get("obs_nid") is not None:
+                    nids_to_complete.add(hcfg["obs_nid"])
+                if hcfg.get("hist_nid") is not None:
+                    nids_to_complete.add(hcfg["hist_nid"])
+            mark_nodes_completed(nids_to_complete)
+
+    update_run_state("progress", 0.80)
     return processed_any

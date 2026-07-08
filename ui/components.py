@@ -1,9 +1,11 @@
 import os
+import time
 import threading
 import dearpygui.dearpygui as dpg
 from ui.graph import (compile_graph_topology, check_pipeline_connectivity,
                       mark_nodes_from_pipeline_check, validate_node_expressions,
-                      clear_all_node_errors)
+                      clear_all_node_errors, apply_node_runtime_states,
+                      _clear_node_runtime_theme, _set_node_done)
 from ui.state import get_run_state, update_run_state
 from paths import get_fce_home
 
@@ -124,13 +126,15 @@ def refresh_ui_canvas(selections_info: list | None = None,
 def _frame_poll_callback(sender=None, app_data=None, user_data=None):
     if not safe_get_state("running"):
         dpg.configure_item("btn_trigger", label="Run", enabled=True)
+        if dpg.does_item_exist("ui_status_label"):
+            dpg.set_value("ui_status_label", "")
         if safe_get_state("stop"):
             dpg.set_value("ui_progress_bar", 0.0)
             dpg.configure_item("ui_progress_bar", overlay="Aborted")
             log_to_message_center("Aborted.")
         else:
             dpg.set_value("ui_progress_bar", 1.0)
-            dpg.configure_item("ui_progress_bar", overlay="100%")
+            dpg.configure_item("ui_progress_bar", overlay="Done")
 
             # Refresh plots using selections_info when available
             sel_info = getattr(_frame_poll_callback, "_last_selections_info", None)
@@ -147,17 +151,38 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
                 dpg.set_value("ui_txt_mu", f"Best Fit Signal Strength: {mu}")
             if sig is not None and dpg.does_item_exist("ui_txt_sig"):
                 dpg.set_value("ui_txt_sig", f"Discovery Significance: {sig} sigma")
+
+        # Apply final node colour states (keep completed green after run ends)
+        active    = safe_get_state("active_nodes")
+        completed = safe_get_state("completed_nodes")
+        apply_node_runtime_states(active, completed)
         return
 
     prog   = safe_get_state("progress")
     status = safe_get_state("status_msg")
+    phase  = safe_get_state("current_phase")
     if status:
         log_to_message_center(status)
         safe_set_state("status_msg", "")
 
+    # Elapsed time since run started
+    start   = safe_get_state("run_start_time")
+    elapsed = int(time.time() - start) if start > 0 else 0
+    elapsed_str = f"{elapsed // 60}:{elapsed % 60:02d}"
+
     pct = int(prog * 100)
     dpg.set_value("ui_progress_bar", prog)
     dpg.configure_item("ui_progress_bar", overlay=f"{pct}%")
+
+    # Status label: phase name + elapsed time
+    if dpg.does_item_exist("ui_status_label"):
+        label_text = f"{phase}  ({elapsed_str})" if phase else f"Processing...  ({elapsed_str})"
+        dpg.set_value("ui_status_label", label_text)
+
+    # Apply node colour highlights from background state
+    active    = safe_get_state("active_nodes")
+    completed = safe_get_state("completed_nodes")
+    apply_node_runtime_states(active, completed)
 
     dpg.set_frame_callback(dpg.get_frame_count() + 6, _frame_poll_callback)
 
@@ -181,7 +206,8 @@ def trigger_analysis_pipeline():
         )
         return
 
-    # Clear errors from any previous run
+    # Clear errors from any previous run; preserve runtime (green) states until
+    # we know which nodes need reprocessing (determined after topology compile).
     clear_all_node_errors()
 
     # Check connectivity
@@ -215,11 +241,50 @@ def trigger_analysis_pipeline():
     if dpg.does_item_exist("ui_txt_sig"):
         dpg.set_value("ui_txt_sig", "Discovery Significance: N/A")
 
-    safe_set_state("progress", 0.0)
-    safe_set_state("running",  True)
-    safe_set_state("stop",     False)
+    safe_set_state("progress",       0.0)
+    safe_set_state("running",        True)
+    safe_set_state("stop",           False)
+    safe_set_state("current_phase",  "Starting...")
+    safe_set_state("run_start_time", time.time())
 
     cfg = compile_graph_topology()
+
+    # Determine which selection caches are still valid so we can keep those
+    # nodes green and only reset the ones that need reprocessing.
+    _cached_sel_nids = set()
+    try:
+        import json as _json
+        _hdir = FCE_DIR
+        _config_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "config", "samples.json"
+        )
+        with open(_config_path) as _f:
+            _sdata = _json.load(_f)
+        _en = cfg["energy"].replace(" GeV", "")
+        _active = list(_sdata.get(_en, {}).keys())
+        for _sel in cfg.get("selections", []):
+            _nid = _sel.get("nid")
+            if _nid is None:
+                continue
+            _h5 = _sel["h5_sel"]
+            if _active and all(
+                os.path.exists(os.path.join(_hdir, "cache", f"sel_{_h5}_{_s}.npz"))
+                for _s in _active
+            ):
+                _cached_sel_nids.add(_nid)
+    except Exception:
+        pass
+
+    # Reset runtime themes: clear non-cached nodes, keep cached ones green
+    for _nid in list(REGISTRY.nodes.keys()):
+        if _nid not in _cached_sel_nids:
+            _clear_node_runtime_theme(_nid)
+        else:
+            _set_node_done(_nid)
+
+    # Seed RUN_STATE node sets with pre-confirmed cached selections
+    safe_set_state("active_nodes",    set())
+    safe_set_state("completed_nodes", set(_cached_sel_nids))
 
     # Build selections_info for the display refresh after run
     selections = cfg.get("selections", [])

@@ -433,6 +433,92 @@ def clear_all_node_errors():
         _set_node_error(nid, False)
 
 
+# ---------------------------------------------------------------------------
+# Runtime node state highlighting (active / done) — applied from main thread
+# ---------------------------------------------------------------------------
+
+_NODE_RUNTIME_STATES: dict[int, str] = {}  # nid -> "active" | "done"
+
+
+def _set_node_active(nid: int):
+    """Apply an orange/amber theme to indicate the node is currently processing."""
+    node_tag  = f"node_{nid}"
+    theme_tag = f"node_run_theme_{nid}"
+    if not dpg.does_item_exist(node_tag):
+        return
+    if dpg.does_item_exist(theme_tag):
+        dpg.delete_item(theme_tag)
+    with dpg.theme(tag=theme_tag):
+        with dpg.theme_component(dpg.mvNode):
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackground,
+                                (75, 50, 8), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered,
+                                (95, 65, 12), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected,
+                                (95, 65, 12), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeOutline,
+                                (215, 145, 25), category=dpg.mvThemeCat_Nodes)
+    dpg.bind_item_theme(node_tag, theme_tag)
+    _NODE_RUNTIME_STATES[nid] = "active"
+
+
+def _set_node_done(nid: int):
+    """Apply a green theme to indicate the node completed successfully."""
+    node_tag  = f"node_{nid}"
+    theme_tag = f"node_run_theme_{nid}"
+    if not dpg.does_item_exist(node_tag):
+        return
+    if dpg.does_item_exist(theme_tag):
+        dpg.delete_item(theme_tag)
+    with dpg.theme(tag=theme_tag):
+        with dpg.theme_component(dpg.mvNode):
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackground,
+                                (15, 58, 22), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered,
+                                (20, 74, 30), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected,
+                                (20, 74, 30), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeOutline,
+                                (48, 195, 70), category=dpg.mvThemeCat_Nodes)
+    dpg.bind_item_theme(node_tag, theme_tag)
+    _NODE_RUNTIME_STATES[nid] = "done"
+
+
+def _clear_node_runtime_theme(nid: int):
+    """Remove the runtime theme from a node and restore its default appearance."""
+    node_tag  = f"node_{nid}"
+    theme_tag = f"node_run_theme_{nid}"
+    if not dpg.does_item_exist(node_tag):
+        _NODE_RUNTIME_STATES.pop(nid, None)
+        return
+    if dpg.does_item_exist(theme_tag):
+        dpg.delete_item(theme_tag)
+    dpg.bind_item_theme(node_tag, 0)
+    _NODE_RUNTIME_STATES.pop(nid, None)
+
+
+def clear_all_node_runtime_states():
+    """Reset every node to its default appearance (no runtime highlight)."""
+    for nid in list(REGISTRY.nodes.keys()):
+        _clear_node_runtime_theme(nid)
+    _NODE_RUNTIME_STATES.clear()
+
+
+def apply_node_runtime_states(active_nodes: set, completed_nodes: set):
+    """Called from the main-thread poll loop to sync node visuals with run state."""
+    for nid in list(REGISTRY.nodes.keys()):
+        current = _NODE_RUNTIME_STATES.get(nid)
+        if nid in active_nodes:
+            if current != "active":
+                _set_node_active(nid)
+        elif nid in completed_nodes:
+            if current != "done":
+                _set_node_done(nid)
+        else:
+            if current is not None:
+                _clear_node_runtime_theme(nid)
+
+
 def validate_node_expressions() -> list[tuple[int, str]]:
     """Check syntax of all expression fields. Returns list of (nid, error_msg)."""
     errors = []
@@ -1029,6 +1115,7 @@ def compile_graph_topology() -> dict:
         hcfg_raw = {
             "observable": observable, "bins": bins, "min": rng_min, "max": rng_max,
             "target": target, "node_name": node_name,
+            "obs_nid": obs_nid, "hist_nid": hist_nid,
         }
 
         if sel_nid is not None:

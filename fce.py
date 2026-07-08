@@ -251,7 +251,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
         # Right: controls + plot + console
         with dpg.child_window(width=660, height=-75, border=False):
 
-            dpg.add_spacer(height=22)
+            dpg.add_spacer(height=18)
             dpg.add_progress_bar(
                 label="Progress",
                 tag="ui_progress_bar",
@@ -260,7 +260,12 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 width=-1,
                 height=22,
             )
-            dpg.add_spacer(height=5)
+            dpg.add_text(
+                "",
+                tag="ui_status_label",
+                color=(155, 155, 155),
+            )
+            dpg.add_spacer(height=2)
             dpg.add_button(
                 label="Run",
                 tag="btn_trigger",
