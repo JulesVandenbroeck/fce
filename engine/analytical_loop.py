@@ -20,12 +20,12 @@ hdir = get_fce_home()
 # OPT-3: parallel workers per selection branch; each sample is independent
 _MAX_WORKERS = 4
 
-# Persistent event-count cache: maps "{detector}_{energy}_{sample}" -> int
-_EVENT_COUNTS_FILE = os.path.join(hdir, "cache", "event_counts.json")
+# Persistent event-count cache stored at the FCE home root (not inside cache/,
+# which is wiped on every startup) so counts survive across sessions.
+_EVENT_COUNTS_FILE = os.path.join(hdir, "event_counts.json")
 
 
 def _load_event_counts() -> dict:
-    """Load the persistent event-count cache from disk."""
     if os.path.exists(_EVENT_COUNTS_FILE):
         try:
             with open(_EVENT_COUNTS_FILE) as f:
@@ -33,6 +33,16 @@ def _load_event_counts() -> dict:
         except Exception:
             pass
     return {}
+
+
+def _find_data_file(cfg: dict, s: str) -> str | None:
+    """Return the path to the ROOT file for sample *s*, or None if not found."""
+    for base in (os.getcwd(), hdir):
+        path = os.path.join(base, "datasets", cfg["detector"],
+                            cfg["energy"].replace(" ", ""), f"{s}.root")
+        if os.path.exists(path):
+            return path
+    return None
 
 
 class hist:
@@ -49,10 +59,10 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
     """Process one sample for one selection branch: build cache then fill histograms.
 
     progress_ctx keys:
-      events_done   [int]  — running total events processed (mutable list)
-      total_events  [int]  — total events to read across non-cached pairs (pre-loaded)
-      plock         Lock   — guards events_done / total_events
-      key_prefix    str    — "{detector}_{energy_nospaces}_" (unused at runtime)
+      events_done    [int]  — running total events processed across all workers
+      total_events   [int]  — pre-computed denominator (fixed before processing starts)
+      samples_started [int] — sequential counter of samples that began ROOT reading
+      plock          Lock   — guards events_done and samples_started
     """
     n_samp = len(active_samples)
     h5_sel = sel_cfg["h5_sel"]
@@ -83,8 +93,6 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
             ).hexdigest()
             parent_cache = os.path.join(hdir, "cache", f"sel_{parent_h5}_{s}.npz")
             if os.path.exists(parent_cache):
-                update_run_state("status_msg",
-                                 f"[{idx+1}/{n_samp}] filtering from parent cache")
                 try:
                     last_expr = sel_exprs_list[-1]
                     compiled_last = ([compile(last_expr, '<sel>', 'eval')]
@@ -98,16 +106,11 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
                     update_run_state("status_msg", f"Cache filter error: {err}")
 
         if not derived:
-            data_file = os.path.join(os.getcwd(), "datasets", cfg["detector"],
-                                     cfg["energy"].replace(" ", ""), f"{s}.root")
-            if not os.path.exists(data_file):
-                data_file = os.path.join(hdir, "datasets", cfg["detector"],
-                                         cfg["energy"].replace(" ", ""), f"{s}.root")
-                if not os.path.exists(data_file):
-                    update_run_state("status_msg", f"Missing data: {s}")
-                    return False
+            data_file = _find_data_file(cfg, s)
+            if data_file is None:
+                update_run_state("status_msg", f"Missing data: {s}")
+                return False
 
-            update_run_state("status_msg", f"Processing [{idx+1}/{n_samp}]")
             cache_acc = make_cache_acc()
 
             try:
@@ -118,6 +121,15 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
                               if "pt" in k or "eta" in k or "phi" in k
                               or "e" in k or "weight" in k or "btag" in k
                               or "d0signif" in k or "z0signif" in k]
+
+                    # Sequential counter: increments as each worker starts ROOT
+                    # reading, so the UI always shows 1/N, 2/N, ... regardless
+                    # of which sample index is processed first.
+                    with progress_ctx["plock"]:
+                        progress_ctx["samples_started"][0] += 1
+                        sample_num = progress_ctx["samples_started"][0]
+                    update_run_state("status_msg",
+                                     f"Processing [{sample_num}/{n_samp}]")
 
                     entries_processed = 0
                     for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
@@ -204,25 +216,45 @@ def run_physics_loop(cfg, samples, active_samples, en):
     # Pre-compute the multiplicity component of the cache key (matches compile_graph_topology)
     mult_h5_base = cfg["energy"] + cfg["detector"] + str(cfg.get("mult_cuts", []))
 
-    # ── Event-count-based progress ────────────────────────────────────────────
+    # ── Pre-compute total events for progress denominator ────────────────────
+    # For each non-cached (selection, sample) pair we need to know num_entries
+    # BEFORE processing starts so the denominator never changes mid-run (which
+    # would cause the bar to go backwards when the ratio drops).
+    #
+    # Priority:
+    #   1. event_counts.json populated by the downloader (zero I/O).
+    #   2. Quick ROOT header scan — uproot reads TTree metadata in microseconds,
+    #      without iterating any events.  Result is NOT saved to disk; that is
+    #      the downloader's job.
     event_counts = _load_event_counts()
     ec_prefix = f"{cfg['detector']}_{cfg['energy'].replace(' ', '')}_"
 
-    # Compute progress denominator from known counts for non-cached (sel, sample) pairs.
     total_events_init = 0
+    header_cache: dict[str, int] = {}   # s -> num_entries, avoids re-opening per selection
     for sel_cfg in selections:
         h5_sel = sel_cfg["h5_sel"]
         for s in active_samples:
             sel_cache = os.path.join(hdir, "cache", f"sel_{h5_sel}_{s}.npz")
             if not os.path.exists(sel_cache):
                 cnt = event_counts.get(ec_prefix + s, 0)
+                if cnt == 0 and s not in header_cache:
+                    # Fall back to ROOT header scan (fast, no event iteration)
+                    data_file = _find_data_file(cfg, s)
+                    if data_file:
+                        try:
+                            with uproot.open(data_file) as f:
+                                header_cache[s] = f["ntuple"].num_entries
+                        except Exception:
+                            header_cache[s] = 0
+                if cnt == 0:
+                    cnt = header_cache.get(s, 0)
                 total_events_init += cnt
 
     progress_ctx = {
-        "events_done":  [0],
-        "total_events": [total_events_init],
-        "plock":        threading.Lock(),
-        "key_prefix":   ec_prefix,
+        "events_done":     [0],
+        "total_events":    [total_events_init],
+        "samples_started": [0],
+        "plock":           threading.Lock(),
     }
     processed_any = False
 

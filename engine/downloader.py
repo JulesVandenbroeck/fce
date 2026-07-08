@@ -9,7 +9,7 @@ from paths import get_fce_home
 _BASE_URL = "https://homepage.iihe.ac.be/~kskovpen/fce/datasets/"
 
 _hdir = get_fce_home()
-_EVENT_COUNTS_FILE = os.path.join(_hdir, "cache", "event_counts.json")
+_EVENT_COUNTS_FILE = os.path.join(_hdir, "event_counts.json")
 
 
 def _load_counts() -> dict:
@@ -25,7 +25,6 @@ def _load_counts() -> dict:
 def _save_counts(counts: dict):
     tmp = _EVENT_COUNTS_FILE + ".tmp"
     try:
-        os.makedirs(os.path.dirname(_EVENT_COUNTS_FILE), exist_ok=True)
         with open(tmp, "w") as f:
             json.dump(counts, f)
         os.replace(tmp, _EVENT_COUNTS_FILE)
