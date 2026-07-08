@@ -200,11 +200,44 @@ def filter_selection_cache(parent_cache_path: str, additional_exprs: list,
     """
     data = np.load(parent_cache_path, mmap_mode='r')
     n = len(data["weight"])
+
+    # ── Vectorized fast path ─────────────────────────────────────────────────
+    # Evaluate the additional expression as a numpy boolean mask over all events.
+    # numpy operations release the Python GIL, enabling true parallel execution
+    # when multiple workers call this function on different samples simultaneously.
+    # Produces the same output as the per-event fallback but orders of magnitude faster.
+    exprs_to_eval = compiled_exprs if compiled_exprs else additional_exprs
+    try:
+        nphot_arr = data["nphot"] if "nphot" in data else np.zeros(n, dtype=np.float32)
+        vec_vars = {
+            "nlep": data["nlep"], "nel": data["nel"],
+            "nmu":  data["nmu"],  "njets": data["njets"],
+            "nphot": nphot_arr,
+            "l1": _ArrayProxy("l1", data), "l2": _ArrayProxy("l2", data),
+            "j1": _ArrayProxy("j1", data), "j2": _ArrayProxy("j2", data),
+            "ph1": _ArrayProxy("ph1", data), "ph2": _ArrayProxy("ph2", data),
+            "met": _ArrayProxy("met", data),
+            "deltaR": _delta_r_vec,
+        }
+        mask = np.ones(n, dtype=bool)
+        for expr in exprs_to_eval:
+            if not expr:
+                continue
+            result = eval(expr, {"__builtins__": _SAFE_BUILTINS}, vec_vars)
+            result = np.asarray(result, dtype=bool).ravel()
+            if result.shape[0] != n:
+                raise ValueError("shape mismatch")
+            mask &= result
+        # Save filtered arrays directly — same format as save_cache (float32 npz).
+        np.savez_compressed(output_cache_path,
+                            **{k: data[k][mask] for k in data.files})
+        return
+    except Exception:
+        pass
+
+    # ── Per-event fallback (handles 4-vector expressions the vectorized path can't) ─
     acc = make_cache_acc()
     _NULL = _P()
-
-    # OPT-2: use pre-compiled expression objects when available
-    exprs_to_eval = compiled_exprs if compiled_exprs else additional_exprs
 
     for i in range(n):
         try:

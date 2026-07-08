@@ -83,10 +83,13 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
     if not os.path.exists(sel_cache):
         derived = False
         sel_exprs_list = sel_cfg.get("sel_exprs", [])
+        slot = -1   # worker slot claimed for this sample; -1 = not yet claimed
 
         # If this selection is a chain prefix (>1 expression), check whether
-        # the parent prefix cache already exists and filter it instead of
-        # re-reading the ROOT file.
+        # the parent prefix cache already exists and derive from it instead of
+        # re-reading the ROOT file.  The vectorized fast path in
+        # filter_selection_cache releases the GIL (numpy ops) so multiple workers
+        # run truly in parallel even here.
         if len(sel_exprs_list) > 1:
             parent_exprs = sel_exprs_list[:-1]
             parent_h5 = hashlib.md5(
@@ -94,6 +97,19 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
             ).hexdigest()
             parent_cache = os.path.join(hdir, "cache", f"sel_{parent_h5}_{s}.npz")
             if os.path.exists(parent_cache):
+                # Claim a slot so the worker bar shows this sample as active
+                # during derivation.  total=1 / done=0 shows as 0%; bar clears
+                # when the slot is released after filter_selection_cache returns.
+                with progress_ctx["slot_lock"]:
+                    if progress_ctx["slot_pool"]:
+                        slot = progress_ctx["slot_pool"].pop(0)
+                        progress_ctx["worker_data"][slot] = {
+                            "sample": s, "done": 0, "total": 1,
+                        }
+                with progress_ctx["plock"]:
+                    progress_ctx["samples_started"][0] += 1
+                    sample_num = progress_ctx["samples_started"][0]
+                update_run_state("status_msg", f"Processing [{sample_num}/{n_samp}]")
                 try:
                     last_expr = sel_exprs_list[-1]
                     compiled_last = ([compile(last_expr, '<sel>', 'eval')]
@@ -105,6 +121,13 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
                     derived = True
                 except Exception as err:
                     update_run_state("status_msg", f"Cache filter error: {err}")
+                finally:
+                    if slot >= 0:
+                        with progress_ctx["slot_lock"]:
+                            progress_ctx["slot_pool"].append(slot)
+                            progress_ctx["slot_pool"].sort()
+                            progress_ctx["worker_data"].pop(slot, None)
+                        slot = -1
 
         if not derived:
             data_file = _find_data_file(cfg, s)
@@ -113,7 +136,6 @@ def _process_sample(sel_cfg, s, idx, active_samples, mult_h5_base, cfg,
                 return False
 
             cache_acc = make_cache_acc()
-            slot = -1
 
             try:
                 with uproot.open(data_file) as f_root:
