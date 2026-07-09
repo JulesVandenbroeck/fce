@@ -18,20 +18,32 @@ import numpy as np
 import dearpygui.dearpygui as dpg
 from PIL import Image
 
-from ui.graph import link_callback, delink_callback, create_node, setup_link_handlers
-from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload
+from ui.graph import (link_callback, delink_callback, create_node,
+                      setup_link_handlers, on_node_editor_drop,
+                      save_pipeline, load_pipeline)
+from ui.state import REGISTRY
+from ui.components import (trigger_analysis_pipeline, trigger_dataset_download,
+                           confirm_redownload, MAX_HIST_TEXTURES,
+                           save_discovery_process_name)
+from ui.state import update_run_state as _set_state
+from ui.tutorial import show_tutorial
+import ui.state as _ui_state
 from fce_studio import __version__
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# ── Clear caches from previous sessions ───────────────────────────────────────
-# Best-effort: a stale/unwritable cache must never block startup.
+# ── Clear output from previous sessions ───────────────────────────────────────
+# Selection caches (cache/*.npz) are content-addressed by a hash of the
+# expressions and settings, so they are safe to reuse across sessions and are
+# NOT wiped here.  Only the positional output files (hist{N}_*.root) are wiped
+# because they use index-based names that can mis-match a new graph layout.
+# Best-effort: a stale/unwritable directory must never block startup.
 try:
     _FCE_DIR = get_fce_home()
     for _cache_subdir in ("cache", "output"):
         _d = os.path.join(_FCE_DIR, _cache_subdir)
         try:
-            if os.path.exists(_d):
+            if _cache_subdir == "output" and os.path.exists(_d):
                 shutil.rmtree(_d)
             os.makedirs(_d, exist_ok=True)
         except OSError:
@@ -44,11 +56,12 @@ dpg.create_context()
 # ── Textures ─────────────────────────────────────────────────────────────────
 with dpg.texture_registry():
     empty_buffer = [0.1, 0.1, 0.1, 1.0] * (1272 * 908)
-    dpg.add_dynamic_texture(
-        width=1272, height=908,
-        default_value=empty_buffer,
-        tag="plot_texture_buffer",
-    )
+    for _ti in range(MAX_HIST_TEXTURES):
+        dpg.add_dynamic_texture(
+            width=1272, height=908,
+            default_value=empty_buffer,
+            tag=f"plot_texture_buffer_{_ti}",
+        )
 
     # Logo for About window
     _logo_loaded = False
@@ -67,8 +80,9 @@ with dpg.texture_registry():
             except Exception:
                 pass
 
-# ── Font registry (larger font for Run button) ────────────────────────────────
+# ── Font registry ─────────────────────────────────────────────────────────────
 _large_font = None
+_extended_font = None
 with dpg.font_registry():
     _font_candidates = [
         "/System/Library/Fonts/Supplemental/Arial.ttf",
@@ -81,9 +95,16 @@ with dpg.font_registry():
         if os.path.exists(_fp):
             try:
                 _large_font = dpg.add_font(_fp, 20)
+                # Smaller font with Dingbats range so ✏ (U+270F) and ✔ (U+2714)
+                # render correctly on node name buttons.
+                with dpg.font(_fp, 13) as _extended_font:
+                    pass
                 break
             except Exception:
                 pass
+
+_ui_state.EXTENDED_FONT = _extended_font
+_ui_state.LARGE_FONT = _large_font
 
 # ── Help popup (expression guide) ─────────────────────────────────────────────
 with dpg.window(tag="help_expr_window", label="Expression Guide",
@@ -159,15 +180,90 @@ with dpg.window(tag="node_error_window", label="Node Error",
         width=80,
     )
 
+# ── Discovery popup ──────────────────────────────────────────────────────────
+with dpg.window(tag="discovery_window", label="*** DISCOVERY ***",
+                modal=True, show=False, width=420, height=230,
+                no_resize=True):
+    dpg.add_spacer(height=10)
+    dpg.add_text("", tag="discovery_title_text", wrap=400)
+    dpg.add_spacer(height=6)
+    dpg.add_text("", tag="discovery_detail_text", wrap=400)
+    dpg.add_spacer(height=10)
+    dpg.add_text("Name this process:")
+    dpg.add_input_text(tag="discovery_process_name_input", width=-1,
+                       hint="e.g. Higgs boson")
+    dpg.add_spacer(height=10)
+    dpg.add_button(
+        label="Celebrate!",
+        callback=lambda: save_discovery_process_name(
+            dpg.get_value("discovery_process_name_input")
+        ),
+        width=-1, height=32,
+    )
+
 
 # ── Window show helpers ───────────────────────────────────────────────────────
+
+def _on_save_pipeline(sender, app_data):
+    path = (app_data or {}).get("file_path_name", "").strip()
+    if not path:
+        return
+    if not path.lower().endswith(".json"):
+        path += ".json"
+    from ui.components import log_to_message_center
+    try:
+        save_pipeline(path)
+        log_to_message_center(f"Pipeline saved: {path}")
+    except Exception as e:
+        log_to_message_center(f"Save failed: {e}")
+
+
+def _on_load_pipeline(sender, app_data):
+    path = (app_data or {}).get("file_path_name", "").strip()
+    if not path or not os.path.exists(path):
+        return
+    from ui.components import log_to_message_center
+    try:
+        load_pipeline(path)
+        log_to_message_center(f"Pipeline loaded: {path}")
+    except Exception as e:
+        log_to_message_center(f"Load failed: {e}")
+
+
+# ── File dialogs (Save / Load pipeline) ──────────────────────────────────────
+with dpg.file_dialog(
+    directory_selector=False, show=False,
+    callback=_on_save_pipeline, width=700, height=400,
+    tag="save_pipeline_dialog", modal=True,
+    default_filename="pipeline.json",
+):
+    dpg.add_file_extension(".json", color=(255, 255, 100, 255))
+    dpg.add_file_extension("", color=(150, 150, 150, 255))
+
+with dpg.file_dialog(
+    directory_selector=False, show=False,
+    callback=_on_load_pipeline, width=700, height=400,
+    tag="load_pipeline_dialog", modal=True,
+):
+    dpg.add_file_extension(".json", color=(255, 255, 100, 255))
+    dpg.add_file_extension("", color=(150, 150, 150, 255))
+
 
 def _show_about_window(sender=None, app_data=None, user_data=None):
     vp_w = dpg.get_viewport_width()
     vp_h = dpg.get_viewport_height()
     dpg.set_item_pos("about_window", [(vp_w - 360) // 2, (vp_h - 280) // 2])
     dpg.configure_item("about_window", show=True)
-    dpg.focus_item("about_window")
+
+
+def _show_obs_submenu(sender=None, app_data=None, user_data=None):
+    dpg.configure_item("palette_main_grp", show=False)
+    dpg.configure_item("palette_obs_grp", show=True)
+
+
+def _show_main_palette(sender=None, app_data=None, user_data=None):
+    dpg.configure_item("palette_obs_grp", show=False)
+    dpg.configure_item("palette_main_grp", show=True)
 
 
 # ── Main window ───────────────────────────────────────────────────────────────
@@ -176,6 +272,15 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
     with dpg.viewport_menu_bar():
 
         with dpg.menu(label="File"):
+            dpg.add_menu_item(
+                label="Save Pipeline...",
+                callback=lambda: dpg.configure_item("save_pipeline_dialog", show=True),
+            )
+            dpg.add_menu_item(
+                label="Load Pipeline...",
+                callback=lambda: dpg.configure_item("load_pipeline_dialog", show=True),
+            )
+            dpg.add_separator()
             dpg.add_menu_item(label="Exit", callback=lambda: dpg.stop_dearpygui())
 
         # Data menu: per-detector/energy downloads
@@ -205,10 +310,23 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 label="Selection",
                 callback=lambda: create_node("Selection"),
             )
-            dpg.add_menu_item(
-                label="Observable",
-                callback=lambda: create_node("Observable"),
-            )
+            with dpg.menu(label="Observable"):
+                dpg.add_menu_item(
+                    label="Global",
+                    callback=lambda: create_node("ObsGlobal"),
+                )
+                dpg.add_menu_item(
+                    label="Object",
+                    callback=lambda: create_node("ObsObject"),
+                )
+                dpg.add_menu_item(
+                    label="Vector Sum",
+                    callback=lambda: create_node("ObsVectorSum"),
+                )
+                dpg.add_menu_item(
+                    label="Custom",
+                    callback=lambda: create_node("ObsCustom"),
+                )
             dpg.add_menu_item(
                 label="Histogram",
                 callback=lambda: create_node("Histogram"),
@@ -223,8 +341,10 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
     # ── Layout: node editor (left) + control panel with console (right) ───
     with dpg.group(horizontal=True):
 
-        # Left: node editor (full height)
-        with dpg.child_window(width=-670, height=-1, border=False):
+        # Left: node editor (leaves room for palette at bottom)
+        with dpg.child_window(width=-670, height=-75, border=False,
+                              tag="node_editor_pane",
+                              drop_callback=on_node_editor_drop):
             with dpg.node_editor(
                 tag="node_editor_container",
                 callback=link_callback,
@@ -235,9 +355,9 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 pass
 
         # Right: controls + plot + console
-        with dpg.child_window(width=660, height=-1, border=False):
+        with dpg.child_window(width=660, height=-75, border=False):
 
-            dpg.add_spacer(height=22)
+            dpg.add_spacer(height=18)
             dpg.add_progress_bar(
                 label="Progress",
                 tag="ui_progress_bar",
@@ -246,7 +366,50 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 width=-1,
                 height=22,
             )
-            dpg.add_spacer(height=5)
+            dpg.add_text(
+                "",
+                tag="ui_status_label",
+                color=(155, 155, 155),
+            )
+            dpg.add_spacer(height=4)
+
+            # ── Worker count control ───────────────────────────────────────
+            with dpg.group(horizontal=True):
+                dpg.add_text("Workers:", color=(200, 200, 200))
+                dpg.add_spacer(width=4)
+                dpg.add_input_int(
+                    tag="ui_worker_count",
+                    default_value=4,
+                    min_value=1,
+                    max_value=8,
+                    min_clamped=True,
+                    max_clamped=True,
+                    width=70,
+                    callback=lambda s, a, u: _set_state("n_workers", max(1, min(a, 8))),
+                )
+
+            # ── Per-worker progress bars (shown only when n_workers > 1) ──
+            # Pre-create 8 rows; trigger_analysis_pipeline shows the right count.
+            with dpg.group(tag="worker_bars_section", show=False):
+                dpg.add_spacer(height=2)
+                for _wi in range(8):
+                    with dpg.group(tag=f"worker_bar_row_{_wi}",
+                                   horizontal=True, show=False):
+                        dpg.add_text(
+                            f"Worker {_wi + 1}:  --",
+                            tag=f"worker_label_{_wi}",
+                            color=(180, 180, 180),
+                        )
+                        dpg.add_progress_bar(
+                            tag=f"worker_bar_{_wi}",
+                            default_value=0.0,
+                            overlay="",
+                            width=-1,
+                            height=14,
+                        )
+                dpg.add_spacer(height=2)
+
+            dpg.add_spacer(height=4)
             dpg.add_button(
                 label="Run",
                 tag="btn_trigger",
@@ -255,22 +418,14 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 height=42,
             )
             dpg.add_spacer(height=5)
-
-            with dpg.collapsing_header(
-                label="Statistical fit",
-                tag="stat_fit_header",
-                default_open=False,
-            ):
-                dpg.add_text("Best Fit Parameter: N/A",      tag="ui_txt_mu")
-                dpg.add_text("Discovery Significance: N/A",  tag="ui_txt_sig")
-
             dpg.add_spacer(height=6)
-            dpg.add_image(
-                "plot_texture_buffer",
-                tag="canvas_view_frame",
-                width=636,
-                height=454,   # maintains 7:5 ratio of the 700×500 texture
-            )
+            with dpg.group(tag="plot_display_group"):
+                dpg.add_image(
+                    "plot_texture_buffer_0",
+                    tag="canvas_view_frame_0",
+                    width=636,
+                    height=454,
+                )
             with dpg.child_window(
                 tag="console_scroll_container",
                 width=-1,
@@ -283,16 +438,83 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     wrap=0,
                 )
 
+    # ── Node palette (bottom bar) — must be inside the primary window ─────
+    # Palette height 70 px; buttons 44 px → top spacer = (70-44)//2 = 13 px
+    with dpg.child_window(width=-1, height=70, border=True,
+                          tag="node_palette_bar"):
+        dpg.add_spacer(height=13)
+
+        # ── Main palette view ─────────────────────────────────────────────
+        with dpg.group(horizontal=True, tag="palette_main_grp"):
+            dpg.add_spacer(width=8)
+            with dpg.group(horizontal=False):
+                dpg.add_spacer(height=15)
+                dpg.add_text("Drag to canvas ›")
+            dpg.add_spacer(width=12)
+            for _pt, _plabel in [("Multiplicity", "Multiplicity"),
+                                  ("Selection",    "Selection")]:
+                _pbtn = dpg.add_button(label=_plabel, width=160, height=44)
+                with dpg.drag_payload(parent=_pbtn, drag_data=_pt,
+                                      label=f"  + {_plabel}  "):
+                    pass
+                dpg.add_spacer(width=8)
+            # Observable button — click to expand submenu (not draggable)
+            dpg.add_button(label="Observable", width=160, height=44,
+                           callback=_show_obs_submenu)
+            dpg.add_spacer(width=8)
+            _pbtn = dpg.add_button(label="Histogram", width=160, height=44)
+            with dpg.drag_payload(parent=_pbtn, drag_data="Histogram",
+                                  label="  + Histogram  "):
+                pass
+            dpg.add_spacer(width=8)
+
+        # ── Observable submenu view (hidden until Observable is clicked) ──
+        with dpg.group(horizontal=True, tag="palette_obs_grp", show=False):
+            dpg.add_spacer(width=8)
+            dpg.add_button(label="< Back", width=90, height=44,
+                           callback=_show_main_palette)
+            dpg.add_spacer(width=12)
+            for _pt, _pl in [("ObsGlobal",    "Global"),
+                              ("ObsObject",    "Object"),
+                              ("ObsVectorSum", "Vec Sum"),
+                              ("ObsCustom",    "Custom")]:
+                _pb = dpg.add_button(label=_pl, width=130, height=44)
+                with dpg.drag_payload(parent=_pb, drag_data=_pt,
+                                      label=f"  + {_pl}  "):
+                    pass
+                dpg.add_spacer(width=8)
+
+# ── Progress bar green theme ──────────────────────────────────────────────────
+with dpg.theme(tag="progress_bar_theme"):
+    with dpg.theme_component(dpg.mvProgressBar):
+        dpg.add_theme_color(dpg.mvThemeCol_PlotHistogram,
+                            (40, 167, 69), category=dpg.mvThemeCat_Core)
+dpg.bind_item_theme("ui_progress_bar", "progress_bar_theme")
+for _wi in range(8):
+    dpg.bind_item_theme(f"worker_bar_{_wi}", "progress_bar_theme")
+
 # ── Bind large font to Run button ─────────────────────────────────────────────
 if _large_font is not None:
     dpg.bind_item_font("btn_trigger", _large_font)
 
 # ── Create initial nodes ──────────────────────────────────────────────────────
-create_node("DataSource",   pos=[50,  50])
-create_node("Multiplicity", pos=[360, 50])
-create_node("Selection",    pos=[50,  290])
-create_node("Observable",   pos=[360, 290])
-create_node("Histogram",    pos=[200, 530])
+_X_STEP = 310  # horizontal gap between nodes
+create_node("DataSource",   pos=[30,              100], name="IDEA 91 GeV data")
+create_node("Multiplicity", pos=[30 + _X_STEP,    100], name="all events")
+create_node("Selection",    pos=[30 + _X_STEP * 2, 100], name="2 leptons")
+create_node("ObsObject",    pos=[30 + _X_STEP * 3, 100], name="MET pT")
+create_node("Histogram",    pos=[30 + _X_STEP * 4, 100], name="MET pT")
+
+# ── Connect initial nodes in pipeline order ───────────────────────────────────
+for _out_nid, _in_nid in [(0, 1), (1, 2), (2, 3), (3, 4)]:
+    try:
+        _s = dpg.get_alias_id(f"slot_out_{_out_nid}")
+        _e = dpg.get_alias_id(f"slot_in_{_in_nid}")
+        _lid = dpg.add_node_link(_s, _e, parent="node_editor_container")
+        REGISTRY.links[_lid] = (_s, _e)
+        REGISTRY.connections[_s] = _e
+    except Exception:
+        pass
 
 setup_link_handlers()
 
@@ -309,5 +531,6 @@ dpg.setup_dearpygui()
 dpg.show_viewport()
 dpg.set_primary_window("primary_studio_window", True)
 dpg.maximize_viewport()
+dpg.set_frame_callback(frame=1, callback=show_tutorial)
 dpg.start_dearpygui()
 dpg.destroy_context()

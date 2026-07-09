@@ -7,7 +7,7 @@ safe_get_state = get_run_state
 safe_set_state = update_run_state
 
 from engine.analytical_loop import run_physics_loop
-from engine.downloader import run_dataset_download
+from engine.downloader import run_dataset_download  # noqa: F401 (re-exported)
 from engine.plotter import render_plots
 
 from paths import get_fce_home
@@ -39,6 +39,7 @@ def execute_analysis(cfg, _unused):
 
         active_samples = list(samples[en].keys())
 
+        safe_set_state("current_phase", "Reading events...")
         success = run_physics_loop(cfg, samples, active_samples, en)
         if not success or safe_get_state("stop"):
             safe_set_state("running", False)
@@ -48,21 +49,71 @@ def execute_analysis(cfg, _unused):
             safe_set_state("running", False)
             return
 
+        safe_set_state("current_phase", "Rendering plots...")
+        safe_set_state("progress", 0.85)
         try:
             render_plots(cfg, samples, en)
         except Exception as plot_err:
             safe_set_state("status_msg", f"Plot error: {plot_err}")
 
-        # Statistical fit (if requested)
-        if cfg.get("target", "None") not in ("None", None, ""):
+        # Statistical fit: find first histogram across all selections that has a target
+        fit_candidates = []
+        selections = cfg.get("selections")
+        if selections:
+            for sel_cfg in selections:
+                _sel_custom = sel_cfg.get("sel_custom_name", "")
+                _sel_exprs  = sel_cfg.get("sel_exprs", [])
+                for hcfg in sel_cfg["histograms"]:
+                    candidate = dict(hcfg)
+                    candidate["sel_custom_name"] = _sel_custom
+                    candidate["sel_exprs"]       = _sel_exprs
+                    fit_candidates.append(candidate)
+        else:
+            fit_candidates = cfg.get("histograms", [{
+                "observable": cfg["observable"],
+                "bins": cfg["bins"], "min": cfg["min"], "max": cfg["max"],
+                "target": cfg["target"], "h5": cfg["h5"], "plot_idx": 0,
+            }])
+
+        has_fit = any(
+            hcfg.get("target", "None") not in ("None", None, "")
+            for hcfg in fit_candidates
+        )
+        if has_fit:
+            safe_set_state("current_phase", "Computing fit...")
+            safe_set_state("progress", 0.95)
+
+        fit_results = {}
+        for hcfg in fit_candidates:
+            if hcfg.get("target", "None") in ("None", None, ""):
+                continue
             try:
                 from engine.fitter import run_fit
-                mu, sig = run_fit(cfg, samples, en)
-                safe_set_state("fit_mu",  mu)
-                safe_set_state("fit_sig", sig)
+                fit_cfg = dict(cfg)
+                fit_cfg.update(hcfg)
+                mu, sig = run_fit(fit_cfg, samples, en,
+                                  hist_idx=hcfg.get("plot_idx", 0))
+                if mu is not None:
+                    plot_idx = hcfg.get("plot_idx", 0)
+                    fit_results[plot_idx] = {
+                        "mu":             mu,
+                        "sig":            sig,
+                        "node_name":      hcfg.get("node_name", ""),
+                        "x_label":        hcfg.get("x_label", ""),
+                        "sel_custom_name": hcfg.get("sel_custom_name", ""),
+                        "sel_exprs":       hcfg.get("sel_exprs", []),
+                    }
             except Exception as fit_err:
                 safe_set_state("status_msg", f"Fit error: {fit_err}")
 
+        # Legacy single-fit fields (first result) for backwards compat
+        if fit_results:
+            first = next(iter(fit_results.values()))
+            safe_set_state("fit_mu",  first["mu"])
+            safe_set_state("fit_sig", first["sig"])
+        safe_set_state("fit_results", fit_results)
+
+        safe_set_state("current_phase", "")
         safe_set_state("progress", 1.0)
         safe_set_state("running",  False)
 
