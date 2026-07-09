@@ -91,8 +91,8 @@ Available in Selection and Observable nodes:
    - Reads `config/samples.json` for the active sample list at the selected energy.
    - `run_physics_loop()` iterates ROOT files with `uproot`, applying cuts via `filter_raw_event_data()`. Selection expressions are pre-compiled with `compile()` once per selection branch and passed as code objects, avoiding repeated AST parsing per event. Samples within a selection branch are processed in parallel via `ThreadPoolExecutor` (up to 4 workers); each sample writes to a unique cache path so workers never conflict.
    - Two-level cache: selection-level `.npz` cache (accumulated with pre-allocated numpy float32 arrays, ~9× less RAM than Python lists) and histogram-level `.root` cache avoid re-processing. Cache arrays are loaded with `mmap_mode='r'` so the OS pages in only the columns accessed by the observable expression.
-   - `render_plots()` produces one PNG per histogram config (`hist_{i}.png`), loaded into separate DPG texture buffers. A single selection with one histogram shows as a full-width image; multiple selections each appear under a collapsing header labelled by the Selection node's custom name (open by default). Within a selection, multiple histograms are stacked without an inner dropdown.
-   - Optional `run_fit()` computes signal strength mu and significance via `pyhf`.
+   - `render_plots()` produces one PNG per histogram config (`hist_{i}.png`), loaded into separate DPG texture buffers. A single selection with one histogram shows as a full-width image; multiple selections each appear under a collapsing header labelled by the Selection node's custom name (open by default). Within a selection, multiple histograms are stacked without an inner dropdown. Each plot includes: Poisson error bars on data (`w2=counts`); a flush ratio panel (Data/Pred., y ∈ [0, 2]) when both data and MC are present; and a green "Discovered: {name}" annotation when the process has been named.
+   - `run_fit()` runs independently for every histogram that has a signal target. Results stored in `RUN_STATE['fit_results']` as `{plot_idx: {mu, sig, node_name, x_label, sel_custom_name, sel_exprs}}`. Fit text (signal strength + significance) is shown above each plot image. When significance ≥ 5 a discovery popup appears sequentially for each new discovery; the user names the process and the name persists for the session (`_NAMED_PROCESSES`, `_DISCOVERED_PIDS` in `ui/components.py`). Named processes update the legend label across all plots via `process_names_map` injected into `hcfg`.
 7. `_frame_poll_callback()` polls state every 6 frames, updating the progress bar and canvas.
 
 ## Observable node internals
@@ -108,7 +108,7 @@ Available in Selection and Observable nodes:
 ## Key state
 
 - `ui/state.py:REGISTRY` -- NodeRegistry tracking all node ids, types, links, slot mappings, and custom names (`node_names: dict[int, str]`).
-- `ui/state.py:RUN_STATE` -- thread-safe dict: `progress`, `running`, `stop`, `status_msg`, `fit_mu`, `fit_sig`.
+- `ui/state.py:RUN_STATE` -- thread-safe dict: `progress`, `running`, `stop`, `status_msg`, `fit_mu`, `fit_sig`, `fit_results` ({plot_idx: result_dict}).
 - FCE home directory (`~/.fce` or temp fallback): stores `cache/`, `output/`, `datasets/`.
 
 ## UI interactions
