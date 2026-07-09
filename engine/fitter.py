@@ -9,6 +9,13 @@ from paths import get_fce_home
 
 hdir = get_fce_home()
 
+_SIG_CAP = 10.0  # cap reported significance to avoid inf for p0=0
+
+
+def _counting_significance(n_tot: float, s_tot: float) -> float:
+    """Background-free significance: sqrt(2*n) approximation (Asimov, b=0)."""
+    return min(float(np.sqrt(2.0 * n_tot)) if n_tot > 0 else 0.0, _SIG_CAP)
+
 
 def run_fit(cfg, samples, en, hist_idx=0):
     """Run pyhf signal fit. Returns (mu_best, significance) or (None, None)."""
@@ -38,8 +45,20 @@ def run_fit(cfg, samples, en, hist_idx=0):
         except Exception:
             continue
 
-    if signal_vals is None or bkg_vals is None:
+    if signal_vals is None:
         return None, None
+
+    # Background-free case: no other MC samples present
+    if bkg_vals is None:
+        if data_obs is None:
+            data_obs = signal_vals[:]
+        n_tot = float(np.sum(data_obs))
+        s_tot = float(np.sum(signal_vals))
+        if s_tot <= 0:
+            return None, None
+        mu_est = n_tot / s_tot
+        sig = _counting_significance(n_tot, s_tot)
+        return round(mu_est, 3), round(sig, 2)
 
     if data_obs is None:
         data_obs = [b + s for b, s in zip(bkg_vals, signal_vals)]
@@ -66,7 +85,6 @@ def run_fit(cfg, samples, en, hist_idx=0):
         )
         obs_data = pyhf.tensorlib.astensor(data_obs + model.config.auxdata)
 
-        # Best-fit signal strength
         _sink = io.StringIO()
         with warnings.catch_warnings(), contextlib.redirect_stdout(_sink), contextlib.redirect_stderr(_sink):
             warnings.simplefilter("ignore")
@@ -75,8 +93,14 @@ def run_fit(cfg, samples, en, hist_idx=0):
 
             # Discovery significance (q0 test)
             p0 = float(pyhf.infer.hypotest(0.0, obs_data, model, test_stat="q0"))
+
         from scipy.stats import norm as _norm
-        significance = float(_norm.isf(p0)) if 0 < p0 < 1 else 0.0
+        if p0 <= 0.0:
+            significance = _SIG_CAP          # p0=0 → beyond numerical range → cap
+        elif p0 >= 1.0:
+            significance = 0.0
+        else:
+            significance = min(float(_norm.isf(p0)), _SIG_CAP)
 
         return round(mu_fit, 3), round(significance, 2)
 
@@ -86,5 +110,8 @@ def run_fit(cfg, samples, en, hist_idx=0):
         b_sum = float(np.sum(bkg_vals))
         n_sum = float(np.sum(data_obs))
         mu_est = (n_sum - b_sum) / max(s_sum, 1e-6)
-        sig_est = s_sum / np.sqrt(max(b_sum, 1.0))
+        if b_sum <= 0:
+            sig_est = _counting_significance(n_sum, s_sum)
+        else:
+            sig_est = min(s_sum / np.sqrt(b_sum), _SIG_CAP)
         return round(mu_est, 3), round(float(sig_est), 2)
