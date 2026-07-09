@@ -110,11 +110,8 @@ def _process_sample(sel_cfg, s, idx, active_samples, cfg,
                             "sample": s, "done": 0, "total": num_entries,
                         }
 
-                # Sequential counter so status shows 1/N, 2/N, ... in the
-                # order workers actually open ROOT files (not static sample index).
                 with progress_ctx["plock"]:
                     progress_ctx["samples_started"][0] += 1
-                    sample_num = progress_ctx["samples_started"][0]
                 update_run_state("status_msg", "Processing...")
 
                 for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
