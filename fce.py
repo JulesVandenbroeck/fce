@@ -183,6 +183,7 @@ def _show_about_window(sender=None, app_data=None, user_data=None):
     vp_w = dpg.get_viewport_width()
     vp_h = dpg.get_viewport_height()
     dpg.set_item_pos("about_window", [(vp_w - 360) // 2, (vp_h - 280) // 2])
+    dpg.configure_item("about_window", show=True)
 
 
 def _show_obs_submenu(sender=None, app_data=None, user_data=None):
@@ -193,8 +194,6 @@ def _show_obs_submenu(sender=None, app_data=None, user_data=None):
 def _show_main_palette(sender=None, app_data=None, user_data=None):
     dpg.configure_item("palette_obs_grp", show=False)
     dpg.configure_item("palette_main_grp", show=True)
-    dpg.configure_item("about_window", show=True)
-    dpg.focus_item("about_window")
 
 
 # ── Main window ───────────────────────────────────────────────────────────────

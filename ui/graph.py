@@ -787,8 +787,10 @@ def _obs_add_global_row(nid: int):
     rows_grp = f"obs_g_rows_grp_{nid}"
     if not dpg.does_item_exist(rows_grp):
         return
-    new_row = dpg.add_group(horizontal=True, parent=rows_grp)
-    dpg.add_text("+", parent=new_row)
+    prev_row = f"obs_g_row_{nid}_{n - 1}"
+    if dpg.does_item_exist(prev_row):
+        dpg.add_text("+", parent=prev_row)
+    new_row = dpg.add_group(horizontal=True, tag=f"obs_g_row_{nid}_{n}", parent=rows_grp)
     dpg.add_combo(
         _GLOBAL_VARS, default_value=_GLOBAL_VARS[0],
         tag=f"obs_g_var_{nid}_{n}", width=100,
@@ -804,8 +806,10 @@ def _obs_add_object_row(nid: int):
     rows_grp = f"obs_o_rows_grp_{nid}"
     if not dpg.does_item_exist(rows_grp):
         return
-    new_row = dpg.add_group(horizontal=True, parent=rows_grp)
-    dpg.add_text("+", parent=new_row)
+    prev_row = f"obs_o_row_{nid}_{n - 1}"
+    if dpg.does_item_exist(prev_row):
+        dpg.add_text("+", parent=prev_row)
+    new_row = dpg.add_group(horizontal=True, tag=f"obs_o_row_{nid}_{n}", parent=rows_grp)
     dpg.add_combo(
         list(_OBJ_VARS.keys()), default_value="l1",
         tag=f"obs_o_obj_{nid}_{n}", width=55,
@@ -827,8 +831,10 @@ def _obs_add_vecsum_row(nid: int):
     rows_grp = f"obs_v_rows_grp_{nid}"
     if not dpg.does_item_exist(rows_grp):
         return
-    new_row = dpg.add_group(horizontal=True, parent=rows_grp)
-    dpg.add_text("+", parent=new_row)
+    prev_row = f"obs_v_row_{nid}_{n - 1}"
+    if dpg.does_item_exist(prev_row):
+        dpg.add_text("+", parent=prev_row)
+    new_row = dpg.add_group(horizontal=True, tag=f"obs_v_row_{nid}_{n}", parent=rows_grp)
     dpg.add_combo(
         list(_OBJ_VARS.keys()), default_value="l1",
         tag=f"obs_v_obj_{nid}_{n}", width=55,
@@ -971,7 +977,7 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
         _OBS_ROW_COUNT[nid] = 1
         rows_grp = f"obs_g_rows_grp_{nid}"
         dpg.add_group(tag=rows_grp, parent=parent_tag)
-        new_row = dpg.add_group(horizontal=True, parent=rows_grp)
+        new_row = dpg.add_group(horizontal=True, tag=f"obs_g_row_{nid}_0", parent=rows_grp)
         dpg.add_combo(
             _GLOBAL_VARS, default_value=_GLOBAL_VARS[0],
             tag=f"obs_g_var_{nid}_0", width=100,
@@ -994,7 +1000,7 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
         default_obj, default_var = "met", "pt"
         rows_grp = f"obs_o_rows_grp_{nid}"
         dpg.add_group(tag=rows_grp, parent=parent_tag)
-        new_row = dpg.add_group(horizontal=True, parent=rows_grp)
+        new_row = dpg.add_group(horizontal=True, tag=f"obs_o_row_{nid}_0", parent=rows_grp)
         dpg.add_combo(
             list(_OBJ_VARS.keys()), default_value=default_obj,
             tag=f"obs_o_obj_{nid}_0", width=55,
@@ -1032,15 +1038,15 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
         rows_grp = f"obs_v_rows_grp_{nid}"
         dpg.add_group(tag=rows_grp, parent=parent_tag)
         for row_idx in range(2):
-            new_row = dpg.add_group(horizontal=True, parent=rows_grp)
-            if row_idx > 0:
-                dpg.add_text("+", parent=new_row)
+            new_row = dpg.add_group(horizontal=True, tag=f"obs_v_row_{nid}_{row_idx}", parent=rows_grp)
             dpg.add_combo(
                 list(_OBJ_VARS.keys()), default_value=default_objs[row_idx],
                 tag=f"obs_v_obj_{nid}_{row_idx}", width=55,
                 callback=lambda s, a, u: _build_obs_expr(u, "ObsVectorSum"),
                 user_data=nid, parent=new_row,
             )
+            if row_idx == 0:
+                dpg.add_text("+", parent=new_row)
         dpg.add_button(
             label="+", small=True, parent=parent_tag,
             callback=lambda s, a, u: _obs_add_vecsum_row(u),
