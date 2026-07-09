@@ -342,6 +342,7 @@ def _snapshot_node(nid: int) -> dict | None:
     return {
         'type': 'node', 'nid': nid, 'node_type': node_type,
         'pos': list(pos), 'name': name, 'values': values, 'links': links,
+        'obs_row_count': _OBS_ROW_COUNT.get(nid),
     }
 
 
@@ -374,22 +375,36 @@ def _restore_node(snap: dict):
     REGISTRY.next_id = max(old_next, nid + 1)
     if created is None:
         return
-    for tag, val in snap['values'].items():
+
+    ntype    = snap['node_type']
+    vals     = snap['values']
+    saved_n  = snap.get('obs_row_count')
+
+    # Rebuild typed Observable rows from the snapshot so extra rows are restored
+    if ntype == "ObsGlobal" and saved_n:
+        saved_vals = [vals.get(f"obs_g_var_{nid}_{i}", _GLOBAL_VARS[0])
+                      for i in range(saved_n)]
+        _obs_rebuild_global_rows(nid, saved_vals)
+    elif ntype == "ObsObject" and saved_n:
+        saved_pairs = [(vals.get(f"obs_o_obj_{nid}_{i}", "met"),
+                        vals.get(f"obs_o_var_{nid}_{i}", "pt"))
+                       for i in range(saved_n)]
+        _obs_rebuild_object_rows(nid, saved_pairs)
+    elif ntype == "ObsVectorSum" and saved_n:
+        saved_objs = [vals.get(f"obs_v_obj_{nid}_{i}", "l1") for i in range(saved_n)]
+        _obs_rebuild_vecsum_rows(nid, saved_objs)
+
+    for tag, val in vals.items():
         if dpg.does_item_exist(tag):
             try:
                 dpg.set_value(tag, val)
             except Exception:
                 pass
-    # obs_expr_{nid} is already restored above; ensure variable combo is consistent
-    ntype = snap['node_type']
-    if ntype == "ObsObject":
-        for i in range(_OBS_ROW_COUNT.get(nid, 1)):
-            obj_tag = f"obs_o_obj_{nid}_{i}"
-            var_tag = f"obs_o_var_{nid}_{i}"
-            if dpg.does_item_exist(obj_tag) and dpg.does_item_exist(var_tag):
-                obj = dpg.get_value(obj_tag)
-                valid_vars = _OBJ_VARS.get(obj, ["pt", "eta", "phi", "e"])
-                dpg.configure_item(var_tag, items=valid_vars)
+
+    # For VectorSum, re-run expression build after obs_v_res_ is restored
+    if ntype == "ObsVectorSum":
+        _build_obs_expr(nid, "ObsVectorSum")
+
     for link_snap in snap['links']:
         _restore_link(link_snap)
 
@@ -861,67 +876,150 @@ def _obs_obj_change(nid: int, row_idx: int, obj_val: str):
     _build_obs_expr(nid, "ObsObject")
 
 
-def _obs_add_global_row(nid: int):
-    n = _OBS_ROW_COUNT.get(nid, 1)
-    _OBS_ROW_COUNT[nid] = n + 1
+def _obs_rebuild_global_rows(nid: int, values: list):
     rows_grp = f"obs_g_rows_grp_{nid}"
     if not dpg.does_item_exist(rows_grp):
         return
-    prev_row = f"obs_g_row_{nid}_{n - 1}"
-    if dpg.does_item_exist(prev_row):
-        dpg.add_text("+", parent=prev_row)
-    new_row = dpg.add_group(horizontal=True, tag=f"obs_g_row_{nid}_{n}", parent=rows_grp)
-    dpg.add_combo(
-        _GLOBAL_VARS, default_value=_GLOBAL_VARS[0],
-        tag=f"obs_g_var_{nid}_{n}", width=100,
-        callback=lambda s, a, u: _build_obs_expr(u, "ObsGlobal"),
-        user_data=nid, parent=new_row,
-    )
+    dpg.delete_item(rows_grp, children_only=True)
+    n = max(1, len(values))
+    _OBS_ROW_COUNT[nid] = n
+    for i, val in enumerate(values):
+        row = dpg.add_group(horizontal=True, tag=f"obs_g_row_{nid}_{i}", parent=rows_grp)
+        dpg.add_combo(
+            _GLOBAL_VARS,
+            default_value=val if val in _GLOBAL_VARS else _GLOBAL_VARS[0],
+            tag=f"obs_g_var_{nid}_{i}", width=100,
+            callback=lambda s, a, u: _build_obs_expr(u, "ObsGlobal"),
+            user_data=nid, parent=row,
+        )
+        if i < n - 1:
+            dpg.add_text("+", parent=row)
+        if n > 1:
+            dpg.add_button(
+                label="x", small=True, parent=row,
+                callback=lambda s, a, u: _obs_delete_global_row(u[0], u[1]),
+                user_data=(nid, i),
+            )
     _build_obs_expr(nid, "ObsGlobal")
+
+
+def _obs_rebuild_object_rows(nid: int, pairs: list):
+    rows_grp = f"obs_o_rows_grp_{nid}"
+    if not dpg.does_item_exist(rows_grp):
+        return
+    dpg.delete_item(rows_grp, children_only=True)
+    n = max(1, len(pairs))
+    _OBS_ROW_COUNT[nid] = n
+    for i, (obj, var) in enumerate(pairs):
+        valid_objs = list(_OBJ_VARS.keys())
+        if obj not in valid_objs:
+            obj = "met"
+        valid_vars = _OBJ_VARS.get(obj, ["pt", "eta", "phi", "e"])
+        if var not in valid_vars:
+            var = valid_vars[0]
+        row = dpg.add_group(horizontal=True, tag=f"obs_o_row_{nid}_{i}", parent=rows_grp)
+        dpg.add_combo(
+            valid_objs, default_value=obj,
+            tag=f"obs_o_obj_{nid}_{i}", width=55,
+            callback=lambda s, a, u: _obs_obj_change(u[0], u[1], a),
+            user_data=(nid, i), parent=row,
+        )
+        dpg.add_combo(
+            valid_vars, default_value=var,
+            tag=f"obs_o_var_{nid}_{i}", width=60,
+            callback=lambda s, a, u: _build_obs_expr(u, "ObsObject"),
+            user_data=nid, parent=row,
+        )
+        if i < n - 1:
+            dpg.add_text("+", parent=row)
+        if n > 1:
+            dpg.add_button(
+                label="x", small=True, parent=row,
+                callback=lambda s, a, u: _obs_delete_object_row(u[0], u[1]),
+                user_data=(nid, i),
+            )
+    _build_obs_expr(nid, "ObsObject")
+
+
+def _obs_rebuild_vecsum_rows(nid: int, values: list):
+    rows_grp = f"obs_v_rows_grp_{nid}"
+    if not dpg.does_item_exist(rows_grp):
+        return
+    dpg.delete_item(rows_grp, children_only=True)
+    obj_keys = list(_OBJ_VARS.keys())
+    n = max(2, len(values))
+    while len(values) < n:
+        values.append("l1")
+    _OBS_ROW_COUNT[nid] = n
+    for i, val in enumerate(values):
+        row = dpg.add_group(horizontal=True, tag=f"obs_v_row_{nid}_{i}", parent=rows_grp)
+        dpg.add_combo(
+            obj_keys, default_value=val if val in obj_keys else "l1",
+            tag=f"obs_v_obj_{nid}_{i}", width=55,
+            callback=lambda s, a, u: _build_obs_expr(u, "ObsVectorSum"),
+            user_data=nid, parent=row,
+        )
+        if i < n - 1:
+            dpg.add_text("+", parent=row)
+        if n > 2:
+            dpg.add_button(
+                label="x", small=True, parent=row,
+                callback=lambda s, a, u: _obs_delete_vecsum_row(u[0], u[1]),
+                user_data=(nid, i),
+            )
+    _build_obs_expr(nid, "ObsVectorSum")
+
+
+def _obs_delete_global_row(nid: int, row_idx: int):
+    n = _OBS_ROW_COUNT.get(nid, 1)
+    if n <= 1:
+        return
+    kept = [dpg.get_value(f"obs_g_var_{nid}_{i}")
+            for i in range(n) if i != row_idx and dpg.does_item_exist(f"obs_g_var_{nid}_{i}")]
+    _obs_rebuild_global_rows(nid, kept)
+
+
+def _obs_delete_object_row(nid: int, row_idx: int):
+    n = _OBS_ROW_COUNT.get(nid, 1)
+    if n <= 1:
+        return
+    kept = [(dpg.get_value(f"obs_o_obj_{nid}_{i}"), dpg.get_value(f"obs_o_var_{nid}_{i}"))
+            for i in range(n) if i != row_idx
+            and dpg.does_item_exist(f"obs_o_obj_{nid}_{i}")
+            and dpg.does_item_exist(f"obs_o_var_{nid}_{i}")]
+    _obs_rebuild_object_rows(nid, kept)
+
+
+def _obs_delete_vecsum_row(nid: int, row_idx: int):
+    n = _OBS_ROW_COUNT.get(nid, 2)
+    if n <= 2:
+        return
+    kept = [dpg.get_value(f"obs_v_obj_{nid}_{i}")
+            for i in range(n) if i != row_idx and dpg.does_item_exist(f"obs_v_obj_{nid}_{i}")]
+    _obs_rebuild_vecsum_rows(nid, kept)
+
+
+def _obs_add_global_row(nid: int):
+    n = _OBS_ROW_COUNT.get(nid, 1)
+    current = [dpg.get_value(f"obs_g_var_{nid}_{i}")
+               for i in range(n) if dpg.does_item_exist(f"obs_g_var_{nid}_{i}")]
+    _obs_rebuild_global_rows(nid, current + [_GLOBAL_VARS[0]])
 
 
 def _obs_add_object_row(nid: int):
     n = _OBS_ROW_COUNT.get(nid, 1)
-    _OBS_ROW_COUNT[nid] = n + 1
-    rows_grp = f"obs_o_rows_grp_{nid}"
-    if not dpg.does_item_exist(rows_grp):
-        return
-    prev_row = f"obs_o_row_{nid}_{n - 1}"
-    if dpg.does_item_exist(prev_row):
-        dpg.add_text("+", parent=prev_row)
-    new_row = dpg.add_group(horizontal=True, tag=f"obs_o_row_{nid}_{n}", parent=rows_grp)
-    dpg.add_combo(
-        list(_OBJ_VARS.keys()), default_value="l1",
-        tag=f"obs_o_obj_{nid}_{n}", width=55,
-        callback=lambda s, a, u: _obs_obj_change(u[0], u[1], a),
-        user_data=(nid, n), parent=new_row,
-    )
-    dpg.add_combo(
-        _OBJ_VARS["l1"], default_value="pt",
-        tag=f"obs_o_var_{nid}_{n}", width=60,
-        callback=lambda s, a, u: _build_obs_expr(u, "ObsObject"),
-        user_data=nid, parent=new_row,
-    )
-    _build_obs_expr(nid, "ObsObject")
+    current = [(dpg.get_value(f"obs_o_obj_{nid}_{i}"), dpg.get_value(f"obs_o_var_{nid}_{i}"))
+               for i in range(n)
+               if dpg.does_item_exist(f"obs_o_obj_{nid}_{i}")
+               and dpg.does_item_exist(f"obs_o_var_{nid}_{i}")]
+    _obs_rebuild_object_rows(nid, current + [("l1", "pt")])
 
 
 def _obs_add_vecsum_row(nid: int):
     n = _OBS_ROW_COUNT.get(nid, 2)
-    _OBS_ROW_COUNT[nid] = n + 1
-    rows_grp = f"obs_v_rows_grp_{nid}"
-    if not dpg.does_item_exist(rows_grp):
-        return
-    prev_row = f"obs_v_row_{nid}_{n - 1}"
-    if dpg.does_item_exist(prev_row):
-        dpg.add_text("+", parent=prev_row)
-    new_row = dpg.add_group(horizontal=True, tag=f"obs_v_row_{nid}_{n}", parent=rows_grp)
-    dpg.add_combo(
-        list(_OBJ_VARS.keys()), default_value="l1",
-        tag=f"obs_v_obj_{nid}_{n}", width=55,
-        callback=lambda s, a, u: _build_obs_expr(u, "ObsVectorSum"),
-        user_data=nid, parent=new_row,
-    )
-    _build_obs_expr(nid, "ObsVectorSum")
+    current = [dpg.get_value(f"obs_v_obj_{nid}_{i}")
+               for i in range(n) if dpg.does_item_exist(f"obs_v_obj_{nid}_{i}")]
+    _obs_rebuild_vecsum_rows(nid, current + ["l1"])
 
 
 def _make_expr_widgets(tag: str, default: str, hint: str,
@@ -1054,89 +1152,49 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
         )
 
     elif node_type == "ObsGlobal":
-        _OBS_ROW_COUNT[nid] = 1
-        rows_grp = f"obs_g_rows_grp_{nid}"
-        dpg.add_group(tag=rows_grp, parent=parent_tag)
-        new_row = dpg.add_group(horizontal=True, tag=f"obs_g_row_{nid}_0", parent=rows_grp)
-        dpg.add_combo(
-            _GLOBAL_VARS, default_value=_GLOBAL_VARS[0],
-            tag=f"obs_g_var_{nid}_0", width=100,
-            callback=lambda s, a, u: _build_obs_expr(u, "ObsGlobal"),
-            user_data=nid, parent=new_row,
+        dpg.add_input_text(
+            tag=f"obs_expr_{nid}", default_value=_GLOBAL_VARS[0],
+            show=False, parent=parent_tag,
         )
+        dpg.add_group(tag=f"obs_g_rows_grp_{nid}", parent=parent_tag)
+        _obs_rebuild_global_rows(nid, [_GLOBAL_VARS[0]])
         dpg.add_button(
             label="+", small=True, parent=parent_tag,
             callback=lambda s, a, u: _obs_add_global_row(u),
             user_data=nid,
         )
-        dpg.add_input_text(
-            tag=f"obs_expr_{nid}", default_value=_GLOBAL_VARS[0],
-            show=False, parent=parent_tag,
-        )
-        _build_obs_expr(nid, "ObsGlobal")
 
     elif node_type == "ObsObject":
-        _OBS_ROW_COUNT[nid] = 1
-        default_obj, default_var = "met", "pt"
-        rows_grp = f"obs_o_rows_grp_{nid}"
-        dpg.add_group(tag=rows_grp, parent=parent_tag)
-        new_row = dpg.add_group(horizontal=True, tag=f"obs_o_row_{nid}_0", parent=rows_grp)
-        dpg.add_combo(
-            list(_OBJ_VARS.keys()), default_value=default_obj,
-            tag=f"obs_o_obj_{nid}_0", width=55,
-            callback=lambda s, a, u: _obs_obj_change(u[0], u[1], a),
-            user_data=(nid, 0), parent=new_row,
+        dpg.add_input_text(
+            tag=f"obs_expr_{nid}", default_value="met.pt",
+            show=False, parent=parent_tag,
         )
-        dpg.add_combo(
-            _OBJ_VARS[default_obj], default_value=default_var,
-            tag=f"obs_o_var_{nid}_0", width=60,
-            callback=lambda s, a, u: _build_obs_expr(u, "ObsObject"),
-            user_data=nid, parent=new_row,
-        )
+        dpg.add_group(tag=f"obs_o_rows_grp_{nid}", parent=parent_tag)
+        _obs_rebuild_object_rows(nid, [("met", "pt")])
         dpg.add_button(
             label="+", small=True, parent=parent_tag,
             callback=lambda s, a, u: _obs_add_object_row(u),
             user_data=nid,
         )
-        dpg.add_input_text(
-            tag=f"obs_expr_{nid}", default_value=f"{default_obj}.{default_var}",
-            show=False, parent=parent_tag,
-        )
-        _build_obs_expr(nid, "ObsObject")
 
     elif node_type == "ObsVectorSum":
-        _OBS_ROW_COUNT[nid] = 2
-        default_objs = ["l1", "l2"]
-        # Result property at top
+        dpg.add_input_text(
+            tag=f"obs_expr_{nid}", default_value="(l1.p4 + l2.p4).mass",
+            show=False, parent=parent_tag,
+        )
         dpg.add_combo(
             _VEC_RESULT_VARS, default_value="mass",
             tag=f"obs_v_res_{nid}", width=80,
             callback=lambda s, a, u: _build_obs_expr(u, "ObsVectorSum"),
             user_data=nid, parent=parent_tag,
         )
-        # Object rows
-        rows_grp = f"obs_v_rows_grp_{nid}"
-        dpg.add_group(tag=rows_grp, parent=parent_tag)
-        for row_idx in range(2):
-            new_row = dpg.add_group(horizontal=True, tag=f"obs_v_row_{nid}_{row_idx}", parent=rows_grp)
-            dpg.add_combo(
-                list(_OBJ_VARS.keys()), default_value=default_objs[row_idx],
-                tag=f"obs_v_obj_{nid}_{row_idx}", width=55,
-                callback=lambda s, a, u: _build_obs_expr(u, "ObsVectorSum"),
-                user_data=nid, parent=new_row,
-            )
-            if row_idx == 0:
-                dpg.add_text("+", parent=new_row)
+        dpg.add_group(tag=f"obs_v_rows_grp_{nid}", parent=parent_tag)
+        _obs_rebuild_vecsum_rows(nid, ["l1", "l2"])
         dpg.add_button(
             label="+", small=True, parent=parent_tag,
             callback=lambda s, a, u: _obs_add_vecsum_row(u),
             user_data=nid,
         )
-        dpg.add_input_text(
-            tag=f"obs_expr_{nid}", default_value="(l1.p4 + l2.p4).mass",
-            show=False, parent=parent_tag,
-        )
-        _build_obs_expr(nid, "ObsVectorSum")
 
     elif node_type == "Histogram":
         # Initial choices for default energy 91 GeV
