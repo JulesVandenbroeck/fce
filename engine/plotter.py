@@ -92,7 +92,7 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
 
     ax.text(0.0, 1.02, "FCE", transform=ax.transAxes,
             ha="left", va="bottom", fontsize=14, fontweight="bold")
-    l_txt = f"{detector}, $\\sqrt{{s}}$ = {cfg['energy']}"
+    l_txt = f"{detector}, √s = {cfg['energy']}"
     ax.text(1.0, 1.02, l_txt, transform=ax.transAxes, ha="right", va="bottom", fontsize=14)
 
     ax.tick_params(axis="both", labelsize=11)
