@@ -1,9 +1,11 @@
 import os
+import time
 import threading
 import dearpygui.dearpygui as dpg
 from ui.graph import (compile_graph_topology, check_pipeline_connectivity,
                       mark_nodes_from_pipeline_check, validate_node_expressions,
-                      clear_all_node_errors)
+                      clear_all_node_errors, apply_node_runtime_states,
+                      _clear_node_runtime_theme, _set_node_done)
 from ui.state import get_run_state, update_run_state
 from paths import get_fce_home
 
@@ -124,13 +126,21 @@ def refresh_ui_canvas(selections_info: list | None = None,
 def _frame_poll_callback(sender=None, app_data=None, user_data=None):
     if not safe_get_state("running"):
         dpg.configure_item("btn_trigger", label="Run", enabled=True)
+        if dpg.does_item_exist("ui_status_label"):
+            dpg.set_value("ui_status_label", "")
+
+        # Hide worker bars and release progress_ctx reference
+        if dpg.does_item_exist("worker_bars_section"):
+            dpg.configure_item("worker_bars_section", show=False)
+        safe_set_state("progress_ctx", None)
+
         if safe_get_state("stop"):
             dpg.set_value("ui_progress_bar", 0.0)
             dpg.configure_item("ui_progress_bar", overlay="Aborted")
             log_to_message_center("Aborted.")
         else:
             dpg.set_value("ui_progress_bar", 1.0)
-            dpg.configure_item("ui_progress_bar", overlay="100%")
+            dpg.configure_item("ui_progress_bar", overlay="Done")
 
             # Refresh plots using selections_info when available
             sel_info = getattr(_frame_poll_callback, "_last_selections_info", None)
@@ -147,17 +157,63 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
                 dpg.set_value("ui_txt_mu", f"Best Fit Signal Strength: {mu}")
             if sig is not None and dpg.does_item_exist("ui_txt_sig"):
                 dpg.set_value("ui_txt_sig", f"Discovery Significance: {sig} sigma")
+
+        # Apply final node colour states: completed nodes stay green;
+        # nodes that were still active when stopped turn red.
+        active    = safe_get_state("active_nodes")
+        completed = safe_get_state("completed_nodes")
+        was_stopped = safe_get_state("stop")
+        apply_node_runtime_states(active, completed, stopped=was_stopped)
         return
 
     prog   = safe_get_state("progress")
     status = safe_get_state("status_msg")
+    phase  = safe_get_state("current_phase")
     if status:
         log_to_message_center(status)
         safe_set_state("status_msg", "")
 
+    # Elapsed time since run started
+    start   = safe_get_state("run_start_time")
+    elapsed = int(time.time() - start) if start > 0 else 0
+    elapsed_str = f"{elapsed // 60}:{elapsed % 60:02d}"
+
     pct = int(prog * 100)
     dpg.set_value("ui_progress_bar", prog)
     dpg.configure_item("ui_progress_bar", overlay=f"{pct}%")
+
+    # Status label: phase name + elapsed time
+    if dpg.does_item_exist("ui_status_label"):
+        label_text = f"{phase}  ({elapsed_str})" if phase else f"Processing...  ({elapsed_str})"
+        dpg.set_value("ui_status_label", label_text)
+
+    # Apply node colour highlights from background state
+    active    = safe_get_state("active_nodes")
+    completed = safe_get_state("completed_nodes")
+    apply_node_runtime_states(active, completed)
+
+    # ── Update per-worker progress bars ──────────────────────────────────────
+    ctx = safe_get_state("progress_ctx")
+    if ctx is not None and dpg.does_item_exist("worker_bars_section"):
+        n_w = ctx.get("n_workers", 1)
+        if n_w > 1:
+            with ctx["slot_lock"]:
+                w_snapshot = dict(ctx["worker_data"])
+            for _slot in range(n_w):
+                bar_tag = f"worker_bar_{_slot}"
+                lbl_tag = f"worker_label_{_slot}"
+                if not dpg.does_item_exist(bar_tag):
+                    continue
+                if _slot in w_snapshot:
+                    wd = w_snapshot[_slot]
+                    ratio = wd["done"] / wd["total"] if wd["total"] > 0 else 0.0
+                    dpg.set_value(lbl_tag, f"Worker {_slot + 1}:  {wd['sample']}")
+                    dpg.set_value(bar_tag, ratio)
+                    dpg.configure_item(bar_tag, overlay=f"{int(ratio * 100)}%")
+                else:
+                    dpg.set_value(lbl_tag, f"Worker {_slot + 1}:  --")
+                    dpg.set_value(bar_tag, 0.0)
+                    dpg.configure_item(bar_tag, overlay="")
 
     dpg.set_frame_callback(dpg.get_frame_count() + 6, _frame_poll_callback)
 
@@ -181,7 +237,8 @@ def trigger_analysis_pipeline():
         )
         return
 
-    # Clear errors from any previous run
+    # Clear errors from any previous run; preserve runtime (green) states until
+    # we know which nodes need reprocessing (determined after topology compile).
     clear_all_node_errors()
 
     # Check connectivity
@@ -215,11 +272,72 @@ def trigger_analysis_pipeline():
     if dpg.does_item_exist("ui_txt_sig"):
         dpg.set_value("ui_txt_sig", "Discovery Significance: N/A")
 
-    safe_set_state("progress", 0.0)
-    safe_set_state("running",  True)
-    safe_set_state("stop",     False)
+    safe_set_state("progress",       0.0)
+    safe_set_state("running",        True)
+    safe_set_state("stop",           False)
+    safe_set_state("current_phase",  "Starting...")
+    safe_set_state("run_start_time", time.time())
 
     cfg = compile_graph_topology()
+
+    # Determine which selection caches are still valid so we can keep those
+    # nodes green and only reset the ones that need reprocessing.
+    _cached_sel_nids = set()
+    try:
+        import json as _json
+        _hdir = FCE_DIR
+        _config_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "config", "samples.json"
+        )
+        with open(_config_path) as _f:
+            _sdata = _json.load(_f)
+        _en = cfg["energy"].replace(" GeV", "")
+        _active = list(_sdata.get(_en, {}).keys())
+        for _sel in cfg.get("selections", []):
+            _nid = _sel.get("nid")
+            if _nid is None:
+                continue
+            _h5 = _sel["h5_sel"]
+            if _active and all(
+                os.path.exists(os.path.join(_hdir, "cache", f"sel_{_h5}_{_s}.npz"))
+                for _s in _active
+            ):
+                _cached_sel_nids.add(_nid)
+    except Exception:
+        pass
+
+    # DataSource and Multiplicity are config-only; they're always "done".
+    _always_done = {nid for nid, ntype in REGISTRY.nodes.items()
+                    if ntype in ("DataSource", "Multiplicity")}
+    _pre_done = set(_cached_sel_nids) | _always_done
+
+    # Reset runtime themes: clear non-pre-done nodes, keep pre-done ones green
+    for _nid in list(REGISTRY.nodes.keys()):
+        if _nid in _pre_done:
+            _set_node_done(_nid)
+        else:
+            _clear_node_runtime_theme(_nid)
+
+    # Seed RUN_STATE node sets
+    safe_set_state("active_nodes",    set())
+    safe_set_state("completed_nodes", _pre_done)
+
+    # ── Show / reset per-worker bars if running with multiple workers ─────────
+    _n_w = safe_get_state("n_workers")
+    if dpg.does_item_exist("worker_bars_section"):
+        if _n_w > 1:
+            dpg.configure_item("worker_bars_section", show=True)
+            for _wi in range(8):
+                row_tag = f"worker_bar_row_{_wi}"
+                if dpg.does_item_exist(row_tag):
+                    dpg.configure_item(row_tag, show=(_wi < _n_w))
+                if dpg.does_item_exist(f"worker_label_{_wi}"):
+                    dpg.set_value(f"worker_label_{_wi}", f"Worker {_wi + 1}:  --")
+                if dpg.does_item_exist(f"worker_bar_{_wi}"):
+                    dpg.set_value(f"worker_bar_{_wi}", 0.0)
+                    dpg.configure_item(f"worker_bar_{_wi}", overlay="")
+        else:
+            dpg.configure_item("worker_bars_section", show=False)
 
     # Build selections_info for the display refresh after run
     selections = cfg.get("selections", [])

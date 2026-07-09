@@ -39,6 +39,7 @@ def execute_analysis(cfg, _unused):
 
         active_samples = list(samples[en].keys())
 
+        safe_set_state("current_phase", "Reading events...")
         success = run_physics_loop(cfg, samples, active_samples, en)
         if not success or safe_get_state("stop"):
             safe_set_state("running", False)
@@ -48,6 +49,8 @@ def execute_analysis(cfg, _unused):
             safe_set_state("running", False)
             return
 
+        safe_set_state("current_phase", "Rendering plots...")
+        safe_set_state("progress", 0.85)
         try:
             render_plots(cfg, samples, en)
         except Exception as plot_err:
@@ -67,6 +70,14 @@ def execute_analysis(cfg, _unused):
                 "target": cfg["target"], "h5": cfg["h5"], "plot_idx": 0,
             }])
 
+        has_fit = any(
+            hcfg.get("target", "None") not in ("None", None, "")
+            for hcfg in fit_candidates
+        )
+        if has_fit:
+            safe_set_state("current_phase", "Computing fit...")
+            safe_set_state("progress", 0.95)
+
         for hcfg in fit_candidates:
             if hcfg.get("target", "None") in ("None", None, ""):
                 continue
@@ -82,6 +93,7 @@ def execute_analysis(cfg, _unused):
             except Exception as fit_err:
                 safe_set_state("status_msg", f"Fit error: {fit_err}")
 
+        safe_set_state("current_phase", "")
         safe_set_state("progress", 1.0)
         safe_set_state("running",  False)
 

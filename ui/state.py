@@ -4,12 +4,18 @@ import threading
 STATE_LOCK = threading.RLock()
 
 RUN_STATE = {
-    "progress":   0.0,
-    "running":    False,
-    "stop":       False,
-    "status_msg": "Initialized.",
-    "fit_mu":     None,
-    "fit_sig":    None,
+    "progress":        0.0,
+    "running":         False,
+    "stop":            False,
+    "status_msg":      "Initialized.",
+    "fit_mu":          None,
+    "fit_sig":         None,
+    "active_nodes":    set(),   # nids currently being processed (thread workers signal)
+    "completed_nodes": set(),   # nids whose processing is finished (green)
+    "current_phase":   "",      # short human-readable phase string for status label
+    "run_start_time":  0.0,     # time.time() when current run started
+    "n_workers":       4,       # number of parallel sample workers (user-configurable)
+    "progress_ctx":    None,    # live progress_ctx dict from run_physics_loop (read by poller)
 }
 
 NODE_HIERARCHY = {
@@ -57,6 +63,28 @@ def get_run_state(key):
 
 safe_set_state = update_run_state
 safe_get_state = get_run_state
+
+
+def add_active_node(nid: int):
+    """Mark a node as currently being processed (thread-safe)."""
+    with STATE_LOCK:
+        RUN_STATE["active_nodes"] = RUN_STATE["active_nodes"] | {nid}
+
+
+def add_completed_node(nid: int):
+    """Move a node from active → completed (thread-safe)."""
+    with STATE_LOCK:
+        RUN_STATE["active_nodes"]    = RUN_STATE["active_nodes"] - {nid}
+        RUN_STATE["completed_nodes"] = RUN_STATE["completed_nodes"] | {nid}
+
+
+def mark_nodes_completed(nids):
+    """Atomically mark a collection of node IDs as completed."""
+    nid_set = set(nids)
+    with STATE_LOCK:
+        RUN_STATE["active_nodes"]    = RUN_STATE["active_nodes"] - nid_set
+        RUN_STATE["completed_nodes"] = RUN_STATE["completed_nodes"] | nid_set
+
 
 # ── download state ────────────────────────────────────────────────────────────
 DOWNLOAD_LOG_QUEUE = queue.Queue()

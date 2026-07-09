@@ -1,7 +1,7 @@
 import math
 import numpy as np
 import vector
-from ui.state import get_run_state, update_run_state
+from ui.state import get_run_state
 
 _SAFE_BUILTINS = {
     "abs": abs, "max": max, "min": min, "len": len,
@@ -200,11 +200,44 @@ def filter_selection_cache(parent_cache_path: str, additional_exprs: list,
     """
     data = np.load(parent_cache_path, mmap_mode='r')
     n = len(data["weight"])
+
+    # ── Vectorized fast path ─────────────────────────────────────────────────
+    # Evaluate the additional expression as a numpy boolean mask over all events.
+    # numpy operations release the Python GIL, enabling true parallel execution
+    # when multiple workers call this function on different samples simultaneously.
+    # Produces the same output as the per-event fallback but orders of magnitude faster.
+    exprs_to_eval = compiled_exprs if compiled_exprs else additional_exprs
+    try:
+        nphot_arr = data["nphot"] if "nphot" in data else np.zeros(n, dtype=np.float32)
+        vec_vars = {
+            "nlep": data["nlep"], "nel": data["nel"],
+            "nmu":  data["nmu"],  "njets": data["njets"],
+            "nphot": nphot_arr,
+            "l1": _ArrayProxy("l1", data), "l2": _ArrayProxy("l2", data),
+            "j1": _ArrayProxy("j1", data), "j2": _ArrayProxy("j2", data),
+            "ph1": _ArrayProxy("ph1", data), "ph2": _ArrayProxy("ph2", data),
+            "met": _ArrayProxy("met", data),
+            "deltaR": _delta_r_vec,
+        }
+        mask = np.ones(n, dtype=bool)
+        for expr in exprs_to_eval:
+            if not expr:
+                continue
+            result = eval(expr, {"__builtins__": _SAFE_BUILTINS}, vec_vars)
+            result = np.asarray(result, dtype=bool).ravel()
+            if result.shape[0] != n:
+                raise ValueError("shape mismatch")
+            mask &= result
+        # Save filtered arrays directly — same format as save_cache (float32 npz).
+        np.savez_compressed(output_cache_path,
+                            **{k: data[k][mask] for k in data.files})
+        return
+    except Exception:
+        pass
+
+    # ── Per-event fallback (handles 4-vector expressions the vectorized path can't) ─
     acc = make_cache_acc()
     _NULL = _P()
-
-    # OPT-2: use pre-compiled expression objects when available
-    exprs_to_eval = compiled_exprs if compiled_exprs else additional_exprs
 
     for i in range(n):
         try:
@@ -269,8 +302,7 @@ def _obj_from_cache(data, i, prefix, keys, extra=None) -> _P:
     return _P(**kw)
 
 
-def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str,
-                               sample_idx: int = 0, total_samples: int = 1):
+def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str):
     """Load a selection-level cache and fill the histogram with a fresh observable eval."""
     # OPT-1: mmap_mode='r' lets the OS page in only accessed columns; unaccessed arrays
     # are never faulted into RAM (particularly useful in the vectorized path below).
@@ -279,8 +311,6 @@ def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str,
     weights = data["weight"].astype(np.float64)
 
     # ── Vectorized fast path: evaluate observable over all events at once ──
-    update_run_state("progress",
-                     min(0.99, (sample_idx + 0.05) / max(1, total_samples)))
     try:
         vec_vars = {
             "nlep": data["nlep"], "nel": data["nel"],
@@ -297,8 +327,6 @@ def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str,
         if vals.shape[0] == n:
             mask = np.isfinite(vals) & (vals > -900.0)
             outHist.h["h"].fill(vals[mask], weight=weights[mask])
-            update_run_state("progress",
-                             min(0.99, (sample_idx + 1.0) / max(1, total_samples)))
             return
     except Exception:
         pass
@@ -313,8 +341,6 @@ def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str,
     _step = max(1, n // 100)
     for i in range(n):
         if i % _step == 0:
-            frac = (sample_idx + i / max(1, n)) / max(1, total_samples)
-            update_run_state("progress", min(0.99, frac))
             if get_run_state("stop"):
                 return
         try:
@@ -353,17 +379,10 @@ def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str,
 # Main per-basket filter
 # ---------------------------------------------------------------------------
 
-def filter_raw_event_data(arrays, nev, cfg, outHist, _f_s2, _f_s3,
-                          observable_target, sample_idx, total_samples,
-                          basket_start_entry, total_entries,
+def filter_raw_event_data(arrays, nev, cfg, outHist, observable_target,
                           cache_acc=None):
     if get_run_state("stop"):
         return [], [], True
-
-    global_event_pos = basket_start_entry + nev
-    sample_fraction  = global_event_pos / max(1, total_entries)
-    update_run_state("progress",
-                     min(0.99, (sample_idx + sample_fraction) / max(1, total_samples)))
 
     has_el = "electron_pt" in arrays and len(arrays["electron_pt"]) > 0
     has_mu = "muon_pt"     in arrays and len(arrays["muon_pt"])     > 0
