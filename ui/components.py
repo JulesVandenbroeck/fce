@@ -17,31 +17,16 @@ CURRENT_WORKER = None
 
 MAX_HIST_TEXTURES = 8
 
-_DISCOVERY_ANIM_STEP = [0.0]
-_DISCOVERY_ANIM_DIR  = [1.0]
+# User-provided names for discovered processes: {plot_idx: str}
+_NAMED_PROCESSES: dict[int, str] = {}
+# Which plot_idx the currently open discovery popup refers to
+_CURRENT_DISCOVERY_PIDX: list[int | None] = [None]
 
 
-def _discovery_anim_tick(sender=None, app_data=None, user_data=None):
-    if not dpg.does_item_exist("discovery_window"):
-        return
-    if not dpg.is_item_shown("discovery_window"):
-        return
-    _DISCOVERY_ANIM_STEP[0] += 0.04 * _DISCOVERY_ANIM_DIR[0]
-    if _DISCOVERY_ANIM_STEP[0] >= 1.0:
-        _DISCOVERY_ANIM_STEP[0] = 1.0
-        _DISCOVERY_ANIM_DIR[0] = -1.0
-    elif _DISCOVERY_ANIM_STEP[0] <= 0.0:
-        _DISCOVERY_ANIM_STEP[0] = 0.0
-        _DISCOVERY_ANIM_DIR[0] = 1.0
-    if dpg.does_item_exist("discovery_anim_bar"):
-        dpg.set_value("discovery_anim_bar", _DISCOVERY_ANIM_STEP[0])
-    dpg.set_frame_callback(dpg.get_frame_count() + 3, _discovery_anim_tick)
-
-
-def _start_discovery_animation():
-    _DISCOVERY_ANIM_STEP[0] = 0.0
-    _DISCOVERY_ANIM_DIR[0]  = 1.0
-    dpg.set_frame_callback(dpg.get_frame_count() + 3, _discovery_anim_tick)
+def save_discovery_process_name(name: str) -> None:
+    pidx = _CURRENT_DISCOVERY_PIDX[0]
+    if pidx is not None and name.strip():
+        _NAMED_PROCESSES[pidx] = name.strip()
 
 
 def log_to_message_center(message_text):
@@ -76,8 +61,29 @@ def _load_png_to_texture(png_path: str, texture_tag: str) -> bool:
         return False
 
 
+def _add_fit_label(plot_idx: int, fit_results: dict, parent: str,
+                   multi_hist: bool = False) -> None:
+    """Insert a fit-result text block above a plot image."""
+    res = fit_results.get(plot_idx)
+    if res is None:
+        return
+    name = _NAMED_PROCESSES.get(plot_idx) or res.get("node_name", "").strip()
+    if multi_hist and name:
+        dpg.add_text(f"Statistical Fit: {name}", parent=parent)
+    elif multi_hist:
+        dpg.add_text(f"Statistical Fit: Histogram {plot_idx + 1}", parent=parent)
+    else:
+        dpg.add_text("Statistical Fit", parent=parent)
+    dpg.add_text(
+        f"  Signal Strength (mu): {res['mu']}    Significance: {res['sig']} sigma",
+        parent=parent,
+    )
+    dpg.add_spacer(height=2, parent=parent)
+
+
 def refresh_ui_canvas(selections_info: list | None = None,
-                      n_histograms: int = 1, hist_labels: list | None = None):
+                      n_histograms: int = 1, hist_labels: list | None = None,
+                      fit_results: dict | None = None):
     """Load plot PNGs into textures and rebuild the plot display group.
 
     selections_info: list of {"name": str, "plot_indices": [int]}, one per Selection
@@ -85,9 +91,12 @@ def refresh_ui_canvas(selections_info: list | None = None,
     (only when there are multiple selections).  Within each selection the plots are
     stacked without inner dropdowns.  Falls back to the legacy n_histograms /
     hist_labels behaviour when selections_info is None.
+    fit_results: {plot_idx: {"mu": float, "sig": float, "node_name": str}}
     """
     if not dpg.does_item_exist("plot_display_group"):
         return
+
+    fit_results = fit_results or {}
 
     # Collect all plot indices to load
     if selections_info:
@@ -119,7 +128,9 @@ def refresh_ui_canvas(selections_info: list | None = None,
                 default_open=True,
                 parent="plot_display_group",
             ):
+                multi = len(indices) > 1
                 for i in indices:
+                    _add_fit_label(i, fit_results, parent=dpg.last_item(), multi_hist=multi)
                     dpg.add_image(
                         f"plot_texture_buffer_{i}",
                         tag=f"canvas_view_frame_{i}",
@@ -132,7 +143,10 @@ def refresh_ui_canvas(selections_info: list | None = None,
             if selections_info
             else [i for i in all_indices if i in loaded]
         )
+        multi = len(indices) > 1
         if len(indices) == 1:
+            _add_fit_label(indices[0], fit_results, parent="plot_display_group",
+                           multi_hist=False)
             dpg.add_image(
                 f"plot_texture_buffer_{indices[0]}",
                 tag="canvas_view_frame_0",
@@ -141,6 +155,8 @@ def refresh_ui_canvas(selections_info: list | None = None,
             )
         else:
             for i in indices:
+                _add_fit_label(i, fit_results, parent="plot_display_group",
+                               multi_hist=multi)
                 dpg.add_image(
                     f"plot_texture_buffer_{i}",
                     tag=f"canvas_view_frame_{i}",
@@ -168,39 +184,14 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
             dpg.set_value("ui_progress_bar", 1.0)
             dpg.configure_item("ui_progress_bar", overlay="Done")
 
-            # Refresh plots using selections_info when available
+            # Refresh plots with fit results overlaid above each image
+            fit_results = safe_get_state("fit_results")
             sel_info = getattr(_frame_poll_callback, "_last_selections_info", None)
             n        = getattr(_frame_poll_callback, "_last_n_hist", 1)
             labels   = getattr(_frame_poll_callback, "_last_hist_labels", None)
-            refresh_ui_canvas(selections_info=sel_info,
-                              n_histograms=n, hist_labels=labels)
+            refresh_ui_canvas(selections_info=sel_info, n_histograms=n,
+                              hist_labels=labels, fit_results=fit_results)
             log_to_message_center("Completed.")
-
-            # Update fit results
-            fit_results = safe_get_state("fit_results")
-            mu  = safe_get_state("fit_mu")
-            sig = safe_get_state("fit_sig")
-            if mu is not None and dpg.does_item_exist("ui_txt_mu"):
-                dpg.set_value("ui_txt_mu", f"Best Fit Signal Strength: {mu}")
-            if sig is not None and dpg.does_item_exist("ui_txt_sig"):
-                dpg.set_value("ui_txt_sig", f"Discovery Significance: {sig} sigma")
-
-            # Rebuild per-histogram fit details
-            if dpg.does_item_exist("stat_fit_content"):
-                dpg.delete_item("stat_fit_content", children_only=True)
-                if len(fit_results) > 1:
-                    for pidx, res in fit_results.items():
-                        name = res.get("node_name", "").strip() or f"Histogram {pidx + 1}"
-                        with dpg.collapsing_header(
-                            label=name, default_open=True,
-                            parent="stat_fit_content",
-                        ):
-                            dpg.add_text(f"Signal Strength: {res['mu']}")
-                            dpg.add_text(f"Significance: {res['sig']} sigma")
-
-            # Open stat fit header when there are results
-            if fit_results and dpg.does_item_exist("stat_fit_header"):
-                dpg.set_value("stat_fit_header", True)
 
             # Discovery popup when significance >= 5
             discovered = [
@@ -209,22 +200,26 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
             ]
             if discovered and dpg.does_item_exist("discovery_window"):
                 pidx, res = discovered[0]
-                name = res.get("node_name", "").strip() or f"Histogram {pidx + 1}"
+                _CURRENT_DISCOVERY_PIDX[0] = pidx
+                name = _NAMED_PROCESSES.get(pidx) or res.get("node_name", "").strip() \
+                       or f"Histogram {pidx + 1}"
                 if dpg.does_item_exist("discovery_title_text"):
                     dpg.set_value("discovery_title_text",
-                                  "Discovery! The fitted process has been observed with "
-                                  "5 sigma significance.")
+                                  "Discovery! The fitted process has been observed "
+                                  "with 5 sigma significance.")
                 if dpg.does_item_exist("discovery_detail_text"):
                     dpg.set_value("discovery_detail_text",
                                   f"Process: {name}\n"
                                   f"Signal strength (mu): {res['mu']}\n"
                                   f"Discovery significance: {res['sig']} sigma")
+                if dpg.does_item_exist("discovery_process_name_input"):
+                    dpg.set_value("discovery_process_name_input",
+                                  _NAMED_PROCESSES.get(pidx, ""))
                 vp_w = dpg.get_viewport_width()
                 vp_h = dpg.get_viewport_height()
-                dpg.set_item_pos("discovery_window", [(vp_w - 420) // 2, (vp_h - 200) // 2])
+                dpg.set_item_pos("discovery_window", [(vp_w - 420) // 2, (vp_h - 230) // 2])
                 dpg.configure_item("discovery_window", show=True)
                 dpg.focus_item("discovery_window")
-                _start_discovery_animation()
 
         # Apply final node colour states: completed nodes stay green;
         # nodes that were still active when stopped turn red.
@@ -341,12 +336,6 @@ def trigger_analysis_pipeline():
     safe_set_state("fit_mu",      None)
     safe_set_state("fit_sig",     None)
     safe_set_state("fit_results", {})
-    if dpg.does_item_exist("ui_txt_mu"):
-        dpg.set_value("ui_txt_mu", "Best Fit Parameter: N/A")
-    if dpg.does_item_exist("ui_txt_sig"):
-        dpg.set_value("ui_txt_sig", "Discovery Significance: N/A")
-    if dpg.does_item_exist("stat_fit_content"):
-        dpg.delete_item("stat_fit_content", children_only=True)
 
     safe_set_state("progress",       0.0)
     safe_set_state("running",        True)
