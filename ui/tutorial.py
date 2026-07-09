@@ -54,13 +54,16 @@ _PAGES = [
     ),
     (
         "Observable Node",
-        "The Observable node defines the physics quantity to histogram.\n\n"
-        "Examples:\n"
-        "  met.pt                    missing transverse energy\n"
-        "  (l1.p4 + l2.p4).mass     di-lepton invariant mass\n"
-        "  l1.pt + l2.pt             scalar pT sum\n\n"
-        "Multiple Observable nodes can connect to one Selection node, each\n"
-        "producing an independent histogram from the same event selection.",
+        "The Observable node defines the quantity plotted on the x-axis.\n\n"
+        "Four types are available from the palette Observable button:\n\n"
+        "  Global  - event counts: nlep, nel, nmu, njets, nphot\n"
+        "  Object  - object property: choose object (l1, j1, met, ...)\n"
+        "            and variable (pt, eta, phi, e; btag for jets;\n"
+        "            d0, z0 for leptons). Use '+' to sum multiple terms.\n"
+        "  Vec Sum - combined system quantity, e.g. di-lepton mass:\n"
+        "            pick the result (mass, pt, ...) and two or more objects.\n"
+        "  Custom  - free-text expression for advanced users.\n\n"
+        "Multiple Observable nodes can share one Selection node.",
         "node_3", "node",
     ),
     (
@@ -87,11 +90,12 @@ _PAGES = [
     ),
     (
         "Node Palette",
-        "The node palette at the bottom makes it easy to add new nodes.\n\n"
-        "Drag any button from the palette and drop it onto the canvas to\n"
-        "create that node type at the exact drop position.\n\n"
-        "Available types: Multiplicity, Selection, Observable, Histogram.\n"
-        "New nodes can also be added via Add Node in the top menu bar.",
+        "The palette at the bottom lets you drag new nodes onto the canvas.\n\n"
+        "Multiplicity, Selection, and Histogram are dragged directly.\n\n"
+        "Observable opens a submenu: click the Observable button to reveal\n"
+        "four sub-types (Global, Object, Vec Sum, Custom). Drag the desired\n"
+        "type onto the canvas, then click '< Back' to return to the palette.\n\n"
+        "Nodes can also be added via Add Node in the top menu bar.",
         "node_palette_bar", "window",
     ),
     (

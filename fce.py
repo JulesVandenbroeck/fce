@@ -183,6 +183,16 @@ def _show_about_window(sender=None, app_data=None, user_data=None):
     vp_w = dpg.get_viewport_width()
     vp_h = dpg.get_viewport_height()
     dpg.set_item_pos("about_window", [(vp_w - 360) // 2, (vp_h - 280) // 2])
+
+
+def _show_obs_submenu(sender=None, app_data=None, user_data=None):
+    dpg.configure_item("palette_main_grp", show=False)
+    dpg.configure_item("palette_obs_grp", show=True)
+
+
+def _show_main_palette(sender=None, app_data=None, user_data=None):
+    dpg.configure_item("palette_obs_grp", show=False)
+    dpg.configure_item("palette_main_grp", show=True)
     dpg.configure_item("about_window", show=True)
     dpg.focus_item("about_window")
 
@@ -364,43 +374,46 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
     with dpg.child_window(width=-1, height=70, border=True,
                           tag="node_palette_bar"):
         dpg.add_spacer(height=13)
-        with dpg.group(horizontal=True):
+
+        # ── Main palette view ─────────────────────────────────────────────
+        with dpg.group(horizontal=True, tag="palette_main_grp"):
             dpg.add_spacer(width=8)
-            # Vertical sub-group centres the label against the 44 px buttons
             with dpg.group(horizontal=False):
-                dpg.add_spacer(height=15)   # (44-13)//2 ≈ 15 px
+                dpg.add_spacer(height=15)
                 dpg.add_text("Drag to canvas ›")
             dpg.add_spacer(width=12)
-            for _pt, _plabel in [
-                ("Multiplicity", "Multiplicity"),
-                ("Selection",    "Selection"),
-            ]:
+            for _pt, _plabel in [("Multiplicity", "Multiplicity"),
+                                  ("Selection",    "Selection")]:
                 _pbtn = dpg.add_button(label=_plabel, width=160, height=44)
                 with dpg.drag_payload(parent=_pbtn, drag_data=_pt,
                                       label=f"  + {_plabel}  "):
                     pass
                 dpg.add_spacer(width=8)
-            # Observable: 2x2 grid of typed sub-nodes
-            with dpg.group(horizontal=False):
-                with dpg.group(horizontal=True):
-                    for _pt, _pl in [("ObsGlobal", "Global"), ("ObsObject", "Object")]:
-                        _pb = dpg.add_button(label=_pl, width=79, height=20)
-                        with dpg.drag_payload(parent=_pb, drag_data=_pt,
-                                              label=f"  + {_pl}  "):
-                            pass
-                dpg.add_spacer(height=4)
-                with dpg.group(horizontal=True):
-                    for _pt, _pl in [("ObsVectorSum", "Vec Sum"), ("ObsCustom", "Custom")]:
-                        _pb = dpg.add_button(label=_pl, width=79, height=20)
-                        with dpg.drag_payload(parent=_pb, drag_data=_pt,
-                                              label=f"  + {_pl}  "):
-                            pass
+            # Observable button — click to expand submenu (not draggable)
+            dpg.add_button(label="Observable", width=160, height=44,
+                           callback=_show_obs_submenu)
             dpg.add_spacer(width=8)
             _pbtn = dpg.add_button(label="Histogram", width=160, height=44)
             with dpg.drag_payload(parent=_pbtn, drag_data="Histogram",
                                   label="  + Histogram  "):
                 pass
             dpg.add_spacer(width=8)
+
+        # ── Observable submenu view (hidden until Observable is clicked) ──
+        with dpg.group(horizontal=True, tag="palette_obs_grp", show=False):
+            dpg.add_spacer(width=8)
+            dpg.add_button(label="< Back", width=90, height=44,
+                           callback=_show_main_palette)
+            dpg.add_spacer(width=12)
+            for _pt, _pl in [("ObsGlobal",    "Global"),
+                              ("ObsObject",    "Object"),
+                              ("ObsVectorSum", "Vec Sum"),
+                              ("ObsCustom",    "Custom")]:
+                _pb = dpg.add_button(label=_pl, width=130, height=44)
+                with dpg.drag_payload(parent=_pb, drag_data=_pt,
+                                      label=f"  + {_pl}  "):
+                    pass
+                dpg.add_spacer(width=8)
 
 # ── Progress bar green theme ──────────────────────────────────────────────────
 with dpg.theme(tag="progress_bar_theme"):
