@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import threading
 import dearpygui.dearpygui as dpg
@@ -27,6 +28,15 @@ _DISCOVERY_QUEUE: list = []
 _CURRENT_DISCOVERY_PIDX: list[int | None] = [None]
 
 
+def _simplify_obs_label(label: str) -> str:
+    """Strip LaTeX formatting to plain ASCII suitable for DPG text display."""
+    s = re.sub(r'\[.*?\]', '', label)  # remove units: [GeV], [rad], …
+    s = s.replace('$', '')             # remove math delimiters
+    s = s.replace('_', '')             # remove subscript underscores
+    s = s.replace('\\', '')            # remove backslashes (\eta → eta)
+    return s.strip()
+
+
 def _discovery_selection_label(res: dict) -> str:
     """Return a human-readable selection label for the discovery popup."""
     custom = res.get("sel_custom_name", "").strip()
@@ -46,7 +56,7 @@ def _show_next_discovery() -> None:
     pidx, res = _DISCOVERY_QUEUE.pop(0)
     _CURRENT_DISCOVERY_PIDX[0] = pidx
 
-    x_label  = res.get("x_label", "").strip() or f"Histogram {pidx + 1}"
+    x_label  = _simplify_obs_label(res.get("x_label", "")) or f"Histogram {pidx + 1}"
     sel_label = _discovery_selection_label(res)
 
     detail_lines = [f"Observable: {x_label}"]
