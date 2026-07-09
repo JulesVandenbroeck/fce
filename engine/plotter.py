@@ -74,12 +74,8 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
         mc_edges     = h_mc[0][1]
         cmap         = matplotlib.colormaps["tab10"].resampled(len(h_mc))
         mc_colors    = [cmap(i) for i in range(len(h_mc))]
-        process_name = hcfg.get("process_name")
-        target       = hcfg.get("target", "")
-        mc_labels    = [
-            process_name if (process_name and s == target) else s
-            for s in s_mc
-        ]
+        proc_map  = hcfg.get("process_names_map", {})
+        mc_labels = [proc_map.get(s, s) for s in s_mc]
         hep.histplot(
             mc_vals, mc_edges, label=mc_labels, stack=True, color=mc_colors,
             histtype="fill", edgecolor="black", linewidth=1.2, alpha=0.8, ax=ax,

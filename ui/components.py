@@ -362,17 +362,22 @@ def trigger_analysis_pipeline():
 
     cfg = compile_graph_topology()
 
-    # Inject remembered process names so the plotter can annotate the figures
-    if _NAMED_PROCESSES:
-        for _hcfg in cfg.get("histograms", []):
-            _pidx = _hcfg.get("plot_idx", 0)
-            if _pidx in _NAMED_PROCESSES:
-                _hcfg["process_name"] = _NAMED_PROCESSES[_pidx]
-        for _sel in cfg.get("selections", []):
-            for _hcfg in _sel.get("histograms", []):
-                _pidx = _hcfg.get("plot_idx", 0)
-                if _pidx in _NAMED_PROCESSES:
-                    _hcfg["process_name"] = _NAMED_PROCESSES[_pidx]
+    # Build a sample-key → process-name map from ALL named histograms so every
+    # plot's legend can reflect all discovered processes, not just its own.
+    _all_hcfgs = list(cfg.get("histograms", []))
+    for _sel in cfg.get("selections", []):
+        _all_hcfgs.extend(_sel.get("histograms", []))
+    _proc_map: dict[str, str] = {}
+    for _hcfg in _all_hcfgs:
+        _pidx = _hcfg.get("plot_idx", 0)
+        _tgt  = _hcfg.get("target", "")
+        if _tgt and _pidx in _NAMED_PROCESSES:
+            _proc_map[_tgt] = _NAMED_PROCESSES[_pidx]
+        if _pidx in _NAMED_PROCESSES:
+            _hcfg["process_name"] = _NAMED_PROCESSES[_pidx]
+    if _proc_map:
+        for _hcfg in _all_hcfgs:
+            _hcfg["process_names_map"] = _proc_map
 
     # Determine which selection caches are still valid so we can keep those
     # nodes green and only reset the ones that need reprocessing.
