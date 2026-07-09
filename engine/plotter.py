@@ -1,20 +1,20 @@
+from paths import get_fce_home
+import uproot
+import mplhep as hep
+import matplotlib.pyplot as plt
 import os
 import warnings
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import mplhep as hep
-import uproot
 
-from paths import get_fce_home
 
 hdir = get_fce_home()
 plt.style.use(hep.style.ROOT)
 
 
 def render_plots(cfg, samples, en):
-    detector   = cfg["detector"]
+    detector = cfg["detector"]
     selections = cfg.get("selections")
 
     if selections:
@@ -47,7 +47,7 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
                     if "h" not in f_res:
                         continue
                     h_obj = f_res["h"]
-                    vals  = h_obj.values()
+                    vals = h_obj.values()
                     edges = h_obj.axes[0].edges()
                 if s != "data":
                     s_mc.append(s)
@@ -64,17 +64,15 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
             2, 1, figsize=(6.36, 5.5), dpi=200,
             gridspec_kw={"height_ratios": [3, 1], "hspace": 0}, sharex=True,
         )
-        ax.spines["bottom"].set_visible(False)
         ax.tick_params(axis="x", bottom=False, labelbottom=False)
-        ax_ratio.spines["top"].set_visible(False)
     else:
         fig, ax = plt.subplots(figsize=(6.36, 4.54), dpi=200)
         ax_ratio = None
 
     if h_mc:
-        mc_vals  = [v for v, _ in h_mc]
+        mc_vals = [v for v, _ in h_mc]
         mc_edges = h_mc[0][1]
-        cmap      = matplotlib.colormaps["tab10"].resampled(len(h_mc))
+        cmap = matplotlib.colormaps["tab10"].resampled(len(h_mc))
         mc_colors = [cmap(i) for i in range(len(h_mc))]
         hep.histplot(
             mc_vals, mc_edges, label=s_mc, stack=True, color=mc_colors,
@@ -104,16 +102,16 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
     ax.legend(loc="upper right", frameon=True, fontsize=12)
 
     if has_ratio:
-        d_arr    = np.array(h_data[0], dtype=float)
+        d_arr = np.array(h_data[0], dtype=float)
         mc_stack = np.sum([np.array(v, dtype=float) for v, _ in h_mc], axis=0)
-        empty    = (mc_stack == 0) | (d_arr == 0)
-        ratio    = np.where(empty, 1.0, d_arr / np.where(mc_stack == 0, 1.0, mc_stack))
+        empty = (mc_stack == 0) | (d_arr == 0)
+        ratio = np.where(empty, 1.0, d_arr / np.where(mc_stack == 0, 1.0, mc_stack))
         ratio_err = np.where(empty, 0.0,
                              np.sqrt(np.maximum(d_arr, 0.0)) /
                              np.where(mc_stack == 0, 1.0, mc_stack))
         edges_r = h_mc[0][1]
         centers = 0.5 * (edges_r[:-1] + edges_r[1:])
-        widths  = edges_r[1:] - edges_r[:-1]
+        widths = edges_r[1:] - edges_r[:-1]
 
         ax_ratio.errorbar(
             centers, ratio, yerr=ratio_err, xerr=widths / 2,
