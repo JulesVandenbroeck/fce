@@ -222,10 +222,23 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 label="Selection",
                 callback=lambda: create_node("Selection"),
             )
-            dpg.add_menu_item(
-                label="Observable",
-                callback=lambda: create_node("Observable"),
-            )
+            with dpg.menu(label="Observable"):
+                dpg.add_menu_item(
+                    label="Global",
+                    callback=lambda: create_node("ObsGlobal"),
+                )
+                dpg.add_menu_item(
+                    label="Object",
+                    callback=lambda: create_node("ObsObject"),
+                )
+                dpg.add_menu_item(
+                    label="Vector Sum",
+                    callback=lambda: create_node("ObsVectorSum"),
+                )
+                dpg.add_menu_item(
+                    label="Custom",
+                    callback=lambda: create_node("ObsCustom"),
+                )
             dpg.add_menu_item(
                 label="Histogram",
                 callback=lambda: create_node("Histogram"),
@@ -361,14 +374,33 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
             for _pt, _plabel in [
                 ("Multiplicity", "Multiplicity"),
                 ("Selection",    "Selection"),
-                ("Observable",   "Observable"),
-                ("Histogram",    "Histogram"),
             ]:
                 _pbtn = dpg.add_button(label=_plabel, width=160, height=44)
                 with dpg.drag_payload(parent=_pbtn, drag_data=_pt,
                                       label=f"  + {_plabel}  "):
                     pass
                 dpg.add_spacer(width=8)
+            # Observable: 2x2 grid of typed sub-nodes
+            with dpg.group(horizontal=False):
+                with dpg.group(horizontal=True):
+                    for _pt, _pl in [("ObsGlobal", "Global"), ("ObsObject", "Object")]:
+                        _pb = dpg.add_button(label=_pl, width=79, height=20)
+                        with dpg.drag_payload(parent=_pb, drag_data=_pt,
+                                              label=f"  + {_pl}  "):
+                            pass
+                dpg.add_spacer(height=4)
+                with dpg.group(horizontal=True):
+                    for _pt, _pl in [("ObsVectorSum", "Vec Sum"), ("ObsCustom", "Custom")]:
+                        _pb = dpg.add_button(label=_pl, width=79, height=20)
+                        with dpg.drag_payload(parent=_pb, drag_data=_pt,
+                                              label=f"  + {_pl}  "):
+                            pass
+            dpg.add_spacer(width=8)
+            _pbtn = dpg.add_button(label="Histogram", width=160, height=44)
+            with dpg.drag_payload(parent=_pbtn, drag_data="Histogram",
+                                  label="  + Histogram  "):
+                pass
+            dpg.add_spacer(width=8)
 
 # ── Progress bar green theme ──────────────────────────────────────────────────
 with dpg.theme(tag="progress_bar_theme"):
@@ -388,7 +420,7 @@ _X_STEP = 310  # horizontal gap between nodes
 create_node("DataSource",   pos=[30,              100], name="IDEA 91 GeV data")
 create_node("Multiplicity", pos=[30 + _X_STEP,    100], name="all events")
 create_node("Selection",    pos=[30 + _X_STEP * 2, 100], name="2 leptons")
-create_node("Observable",   pos=[30 + _X_STEP * 3, 100], name="MET pT")
+create_node("ObsObject",    pos=[30 + _X_STEP * 3, 100], name="MET pT")
 create_node("Histogram",    pos=[30 + _X_STEP * 4, 100], name="MET pT")
 
 # ── Connect initial nodes in pipeline order ───────────────────────────────────
