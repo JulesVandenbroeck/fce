@@ -178,6 +178,23 @@ with dpg.window(tag="node_error_window", label="Node Error",
         width=80,
     )
 
+# ── Discovery popup ──────────────────────────────────────────────────────────
+with dpg.window(tag="discovery_window", label="*** DISCOVERY ***",
+                modal=True, show=False, width=420, height=200,
+                no_resize=True):
+    dpg.add_spacer(height=10)
+    dpg.add_text("", tag="discovery_title_text", wrap=400)
+    dpg.add_spacer(height=6)
+    dpg.add_text("", tag="discovery_detail_text", wrap=400)
+    dpg.add_spacer(height=14)
+    dpg.add_progress_bar(tag="discovery_anim_bar", default_value=0.0, width=-1)
+    dpg.add_spacer(height=10)
+    dpg.add_button(
+        label="Celebrate!",
+        callback=lambda: dpg.configure_item("discovery_window", show=False),
+        width=-1, height=32,
+    )
+
 
 # ── Window show helpers ───────────────────────────────────────────────────────
 
@@ -403,6 +420,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
             ):
                 dpg.add_text("Best Fit Parameter: N/A",      tag="ui_txt_mu")
                 dpg.add_text("Discovery Significance: N/A",  tag="ui_txt_sig")
+                dpg.add_group(tag="stat_fit_content")
 
             dpg.add_spacer(height=6)
             with dpg.group(tag="plot_display_group"):

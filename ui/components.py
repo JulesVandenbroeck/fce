@@ -17,6 +17,32 @@ CURRENT_WORKER = None
 
 MAX_HIST_TEXTURES = 8
 
+_DISCOVERY_ANIM_STEP = [0.0]
+_DISCOVERY_ANIM_DIR  = [1.0]
+
+
+def _discovery_anim_tick(sender=None, app_data=None, user_data=None):
+    if not dpg.does_item_exist("discovery_window"):
+        return
+    if not dpg.is_item_shown("discovery_window"):
+        return
+    _DISCOVERY_ANIM_STEP[0] += 0.04 * _DISCOVERY_ANIM_DIR[0]
+    if _DISCOVERY_ANIM_STEP[0] >= 1.0:
+        _DISCOVERY_ANIM_STEP[0] = 1.0
+        _DISCOVERY_ANIM_DIR[0] = -1.0
+    elif _DISCOVERY_ANIM_STEP[0] <= 0.0:
+        _DISCOVERY_ANIM_STEP[0] = 0.0
+        _DISCOVERY_ANIM_DIR[0] = 1.0
+    if dpg.does_item_exist("discovery_anim_bar"):
+        dpg.set_value("discovery_anim_bar", _DISCOVERY_ANIM_STEP[0])
+    dpg.set_frame_callback(dpg.get_frame_count() + 3, _discovery_anim_tick)
+
+
+def _start_discovery_animation():
+    _DISCOVERY_ANIM_STEP[0] = 0.0
+    _DISCOVERY_ANIM_DIR[0]  = 1.0
+    dpg.set_frame_callback(dpg.get_frame_count() + 3, _discovery_anim_tick)
+
 
 def log_to_message_center(message_text):
     if dpg.does_item_exist("ui_console_log"):
@@ -150,13 +176,55 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
                               n_histograms=n, hist_labels=labels)
             log_to_message_center("Completed.")
 
-            # Update fit results if available
+            # Update fit results
+            fit_results = safe_get_state("fit_results")
             mu  = safe_get_state("fit_mu")
             sig = safe_get_state("fit_sig")
             if mu is not None and dpg.does_item_exist("ui_txt_mu"):
                 dpg.set_value("ui_txt_mu", f"Best Fit Signal Strength: {mu}")
             if sig is not None and dpg.does_item_exist("ui_txt_sig"):
                 dpg.set_value("ui_txt_sig", f"Discovery Significance: {sig} sigma")
+
+            # Rebuild per-histogram fit details
+            if dpg.does_item_exist("stat_fit_content"):
+                dpg.delete_item("stat_fit_content", children_only=True)
+                if len(fit_results) > 1:
+                    for pidx, res in fit_results.items():
+                        name = res.get("node_name", "").strip() or f"Histogram {pidx + 1}"
+                        with dpg.collapsing_header(
+                            label=name, default_open=True,
+                            parent="stat_fit_content",
+                        ):
+                            dpg.add_text(f"Signal Strength: {res['mu']}")
+                            dpg.add_text(f"Significance: {res['sig']} sigma")
+
+            # Open stat fit header when there are results
+            if fit_results and dpg.does_item_exist("stat_fit_header"):
+                dpg.set_value("stat_fit_header", True)
+
+            # Discovery popup when significance >= 5
+            discovered = [
+                (pidx, res) for pidx, res in fit_results.items()
+                if res.get("sig") is not None and res["sig"] >= 5.0
+            ]
+            if discovered and dpg.does_item_exist("discovery_window"):
+                pidx, res = discovered[0]
+                name = res.get("node_name", "").strip() or f"Histogram {pidx + 1}"
+                if dpg.does_item_exist("discovery_title_text"):
+                    dpg.set_value("discovery_title_text",
+                                  "Discovery! The fitted process has been observed with "
+                                  "5 sigma significance.")
+                if dpg.does_item_exist("discovery_detail_text"):
+                    dpg.set_value("discovery_detail_text",
+                                  f"Process: {name}\n"
+                                  f"Signal strength (mu): {res['mu']}\n"
+                                  f"Discovery significance: {res['sig']} sigma")
+                vp_w = dpg.get_viewport_width()
+                vp_h = dpg.get_viewport_height()
+                dpg.set_item_pos("discovery_window", [(vp_w - 420) // 2, (vp_h - 200) // 2])
+                dpg.configure_item("discovery_window", show=True)
+                dpg.focus_item("discovery_window")
+                _start_discovery_animation()
 
         # Apply final node colour states: completed nodes stay green;
         # nodes that were still active when stopped turn red.
@@ -270,12 +338,15 @@ def trigger_analysis_pipeline():
             return
 
     # Reset fit results from previous run
-    safe_set_state("fit_mu",  None)
-    safe_set_state("fit_sig", None)
+    safe_set_state("fit_mu",      None)
+    safe_set_state("fit_sig",     None)
+    safe_set_state("fit_results", {})
     if dpg.does_item_exist("ui_txt_mu"):
         dpg.set_value("ui_txt_mu", "Best Fit Parameter: N/A")
     if dpg.does_item_exist("ui_txt_sig"):
         dpg.set_value("ui_txt_sig", "Discovery Significance: N/A")
+    if dpg.does_item_exist("stat_fit_content"):
+        dpg.delete_item("stat_fit_content", children_only=True)
 
     safe_set_state("progress",       0.0)
     safe_set_state("running",        True)

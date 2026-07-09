@@ -1,5 +1,6 @@
 import os
 import warnings
+import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -56,7 +57,17 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
             except Exception:
                 continue
 
-    fig, ax = plt.subplots(figsize=(6.36, 4.54), dpi=200)
+    has_ratio = h_data is not None and bool(h_mc)
+
+    if has_ratio:
+        fig, (ax, ax_ratio) = plt.subplots(
+            2, 1, figsize=(6.36, 5.5), dpi=200,
+            gridspec_kw={"height_ratios": [3, 1]}, sharex=True,
+        )
+        fig.subplots_adjust(hspace=0.05)
+    else:
+        fig, ax = plt.subplots(figsize=(6.36, 4.54), dpi=200)
+        ax_ratio = None
 
     if h_mc:
         mc_vals  = [v for v, _ in h_mc]
@@ -73,8 +84,9 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=RuntimeWarning,
                                     message=".*sumw are zero.*")
+            # w2=d_vals gives Poisson (sqrt-N) error bars per bin
             hep.histplot(
-                d_vals, d_edges, label="Data Simulation",
+                d_vals, d_edges, w2=d_vals, label="Data Simulation",
                 histtype="errorbar", color="black", marker="o", markersize=4, ax=ax,
             )
 
@@ -84,9 +96,32 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
     ax.text(1.0, 1.02, l_txt, transform=ax.transAxes, ha="right", va="bottom", fontsize=14)
 
     ax.tick_params(axis="both", labelsize=11)
-    ax.set_xlabel(x_label, fontsize=14)
+    if not has_ratio:
+        ax.set_xlabel(x_label, fontsize=14)
     ax.set_ylabel("Events / Bin", fontsize=14)
     ax.legend(loc="upper right", frameon=True, fontsize=12)
+
+    if has_ratio:
+        d_arr    = np.array(h_data[0], dtype=float)
+        mc_stack = np.sum([np.array(v, dtype=float) for v, _ in h_mc], axis=0)
+        empty    = (mc_stack == 0) | (d_arr == 0)
+        ratio    = np.where(empty, 1.0, d_arr / np.where(mc_stack == 0, 1.0, mc_stack))
+        ratio_err = np.where(empty, 0.0,
+                             np.sqrt(np.maximum(d_arr, 0.0)) /
+                             np.where(mc_stack == 0, 1.0, mc_stack))
+        edges_r = h_mc[0][1]
+        centers = 0.5 * (edges_r[:-1] + edges_r[1:])
+        widths  = edges_r[1:] - edges_r[:-1]
+
+        ax_ratio.errorbar(
+            centers, ratio, yerr=ratio_err, xerr=widths / 2,
+            fmt="o", color="black", markersize=4, linewidth=1.0,
+        )
+        ax_ratio.axhline(1.0, color="gray", linewidth=1.0, linestyle="--")
+        ax_ratio.set_ylim(0.0, 2.0)
+        ax_ratio.set_xlabel(x_label, fontsize=14)
+        ax_ratio.set_ylabel("Data / Pred.", fontsize=12)
+        ax_ratio.tick_params(axis="both", labelsize=10)
 
     fig.tight_layout(pad=1.5)
     plt.savefig(os.path.join(hdir, f"hist_{hist_idx}.png"),

@@ -115,8 +115,7 @@ def _process_sample(sel_cfg, s, idx, active_samples, cfg,
                 with progress_ctx["plock"]:
                     progress_ctx["samples_started"][0] += 1
                     sample_num = progress_ctx["samples_started"][0]
-                update_run_state("status_msg",
-                                 f"Processing [{sample_num}/{n_samp}]")
+                update_run_state("status_msg", "Processing...")
 
                 for arrays in tr.iterate(v_keys, step_size="15 MB", library="np"):
                     if get_run_state("stop"):
