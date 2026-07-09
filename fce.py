@@ -195,11 +195,8 @@ with dpg.window(tag="discovery_window", label="*** DISCOVERY ***",
     dpg.add_spacer(height=10)
     dpg.add_button(
         label="Celebrate!",
-        callback=lambda: (
-            save_discovery_process_name(
-                dpg.get_value("discovery_process_name_input")
-            ),
-            dpg.configure_item("discovery_window", show=False),
+        callback=lambda: save_discovery_process_name(
+            dpg.get_value("discovery_process_name_input")
         ),
         width=-1, height=32,
     )

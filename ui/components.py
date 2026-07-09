@@ -19,14 +19,48 @@ MAX_HIST_TEXTURES = 8
 
 # User-provided names for discovered processes: {plot_idx: str}
 _NAMED_PROCESSES: dict[int, str] = {}
+# Processes already discovered (no popup again this session): {plot_idx}
+_DISCOVERED_PIDS: set[int] = set()
+# Queue of (pidx, res) waiting to show discovery popups sequentially
+_DISCOVERY_QUEUE: list = []
 # Which plot_idx the currently open discovery popup refers to
 _CURRENT_DISCOVERY_PIDX: list[int | None] = [None]
 
 
+def _show_next_discovery() -> None:
+    if not _DISCOVERY_QUEUE or not dpg.does_item_exist("discovery_window"):
+        if dpg.does_item_exist("discovery_window"):
+            dpg.configure_item("discovery_window", show=False)
+        return
+    pidx, res = _DISCOVERY_QUEUE.pop(0)
+    _CURRENT_DISCOVERY_PIDX[0] = pidx
+    hist_name = res.get("node_name", "").strip() or f"Histogram {pidx + 1}"
+    if dpg.does_item_exist("discovery_title_text"):
+        dpg.set_value("discovery_title_text",
+                      "Discovery! The process has been observed with "
+                      f"{res['sig']} sigma significance.")
+    if dpg.does_item_exist("discovery_detail_text"):
+        dpg.set_value("discovery_detail_text",
+                      f"Histogram of discovery: {hist_name}\n"
+                      f"Signal strength (mu): {res['mu']}")
+    if dpg.does_item_exist("discovery_process_name_input"):
+        dpg.set_value("discovery_process_name_input",
+                      _NAMED_PROCESSES.get(pidx, ""))
+    vp_w = dpg.get_viewport_width()
+    vp_h = dpg.get_viewport_height()
+    dpg.set_item_pos("discovery_window", [(vp_w - 420) // 2, (vp_h - 230) // 2])
+    dpg.configure_item("discovery_window", show=True)
+    dpg.focus_item("discovery_window")
+
+
 def save_discovery_process_name(name: str) -> None:
     pidx = _CURRENT_DISCOVERY_PIDX[0]
-    if pidx is not None and name.strip():
-        _NAMED_PROCESSES[pidx] = name.strip()
+    if pidx is not None:
+        if name.strip():
+            _NAMED_PROCESSES[pidx] = name.strip()
+        _DISCOVERED_PIDS.add(pidx)
+        _CURRENT_DISCOVERY_PIDX[0] = None
+    _show_next_discovery()
 
 
 def log_to_message_center(message_text):
@@ -193,33 +227,16 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
                               hist_labels=labels, fit_results=fit_results)
             log_to_message_center("Completed.")
 
-            # Discovery popup when significance >= 5
-            discovered = [
+            # Discovery popup for new 5-sigma results (skip already-discovered)
+            to_discover = [
                 (pidx, res) for pidx, res in fit_results.items()
                 if res.get("sig") is not None and res["sig"] >= 5.0
+                and pidx not in _DISCOVERED_PIDS
             ]
-            if discovered and dpg.does_item_exist("discovery_window"):
-                pidx, res = discovered[0]
-                _CURRENT_DISCOVERY_PIDX[0] = pidx
-                name = _NAMED_PROCESSES.get(pidx) or res.get("node_name", "").strip() \
-                       or f"Histogram {pidx + 1}"
-                if dpg.does_item_exist("discovery_title_text"):
-                    dpg.set_value("discovery_title_text",
-                                  "Discovery! The fitted process has been observed "
-                                  "with 5 sigma significance.")
-                if dpg.does_item_exist("discovery_detail_text"):
-                    dpg.set_value("discovery_detail_text",
-                                  f"Process: {name}\n"
-                                  f"Signal strength (mu): {res['mu']}\n"
-                                  f"Discovery significance: {res['sig']} sigma")
-                if dpg.does_item_exist("discovery_process_name_input"):
-                    dpg.set_value("discovery_process_name_input",
-                                  _NAMED_PROCESSES.get(pidx, ""))
-                vp_w = dpg.get_viewport_width()
-                vp_h = dpg.get_viewport_height()
-                dpg.set_item_pos("discovery_window", [(vp_w - 420) // 2, (vp_h - 230) // 2])
-                dpg.configure_item("discovery_window", show=True)
-                dpg.focus_item("discovery_window")
+            if to_discover:
+                _DISCOVERY_QUEUE.clear()
+                _DISCOVERY_QUEUE.extend(to_discover)
+                _show_next_discovery()
 
         # Apply final node colour states: completed nodes stay green;
         # nodes that were still active when stopped turn red.
@@ -344,6 +361,18 @@ def trigger_analysis_pipeline():
     safe_set_state("run_start_time", time.time())
 
     cfg = compile_graph_topology()
+
+    # Inject remembered process names so the plotter can annotate the figures
+    if _NAMED_PROCESSES:
+        for _hcfg in cfg.get("histograms", []):
+            _pidx = _hcfg.get("plot_idx", 0)
+            if _pidx in _NAMED_PROCESSES:
+                _hcfg["process_name"] = _NAMED_PROCESSES[_pidx]
+        for _sel in cfg.get("selections", []):
+            for _hcfg in _sel.get("histograms", []):
+                _pidx = _hcfg.get("plot_idx", 0)
+                if _pidx in _NAMED_PROCESSES:
+                    _hcfg["process_name"] = _NAMED_PROCESSES[_pidx]
 
     # Determine which selection caches are still valid so we can keep those
     # nodes green and only reset the ones that need reprocessing.

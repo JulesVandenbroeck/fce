@@ -101,6 +101,14 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
     ax.set_ylabel("Events / Bin", fontsize=14)
     ax.legend(loc="upper right", frameon=True, fontsize=12)
 
+    process_name = hcfg.get("process_name")
+    if process_name:
+        ax.text(0.02, 0.97, f"Discovered: {process_name}",
+                transform=ax.transAxes, ha="left", va="top", fontsize=11,
+                color="white", fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="#2a7a2a",
+                          alpha=0.85, edgecolor="white", linewidth=0.5))
+
     if has_ratio:
         d_arr = np.array(h_data[0], dtype=float)
         mc_stack = np.sum([np.array(v, dtype=float) for v, _ in h_mc], axis=0)
