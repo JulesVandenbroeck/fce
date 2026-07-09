@@ -158,10 +158,12 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
             if sig is not None and dpg.does_item_exist("ui_txt_sig"):
                 dpg.set_value("ui_txt_sig", f"Discovery Significance: {sig} sigma")
 
-        # Apply final node colour states (keep completed green after run ends)
+        # Apply final node colour states: completed nodes stay green;
+        # nodes that were still active when stopped turn red.
         active    = safe_get_state("active_nodes")
         completed = safe_get_state("completed_nodes")
-        apply_node_runtime_states(active, completed)
+        was_stopped = safe_get_state("stop")
+        apply_node_runtime_states(active, completed, stopped=was_stopped)
         return
 
     prog   = safe_get_state("progress")

@@ -470,6 +470,28 @@ def _set_node_active(nid: int):
     _NODE_RUNTIME_STATES[nid] = "active"
 
 
+def _set_node_aborted(nid: int):
+    """Apply a red theme to indicate the node was processing when the run was stopped."""
+    node_tag = f"node_{nid}"
+    if not dpg.does_item_exist(node_tag):
+        return
+    _delete_runtime_theme(nid)
+    theme_id = dpg.generate_uuid()
+    with dpg.theme(tag=theme_id):
+        with dpg.theme_component(dpg.mvNode):
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackground,
+                                (75, 15, 15), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered,
+                                (95, 20, 20), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected,
+                                (95, 20, 20), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeOutline,
+                                (210, 50, 50), category=dpg.mvThemeCat_Nodes)
+    dpg.bind_item_theme(node_tag, theme_id)
+    _NODE_RUNTIME_THEME_IDS[nid] = theme_id
+    _NODE_RUNTIME_STATES[nid] = "aborted"
+
+
 def _set_node_done(nid: int):
     """Apply a green theme to indicate the node completed successfully."""
     node_tag = f"node_{nid}"
@@ -509,13 +531,22 @@ def clear_all_node_runtime_states():
     _NODE_RUNTIME_THEME_IDS.clear()
 
 
-def apply_node_runtime_states(active_nodes: set, completed_nodes: set):
-    """Called from the main-thread poll loop to sync node visuals with run state."""
+def apply_node_runtime_states(active_nodes: set, completed_nodes: set,
+                              stopped: bool = False):
+    """Called from the main-thread poll loop to sync node visuals with run state.
+
+    When stopped=True, nodes still in active_nodes (not yet finished) are
+    coloured red to signal they were interrupted rather than left orange.
+    """
     for nid in list(REGISTRY.nodes.keys()):
         current = _NODE_RUNTIME_STATES.get(nid)
         if nid in active_nodes:
-            if current != "active":
-                _set_node_active(nid)
+            if stopped:
+                if current != "aborted":
+                    _set_node_aborted(nid)
+            else:
+                if current != "active":
+                    _set_node_active(nid)
         elif nid in completed_nodes:
             if current != "done":
                 _set_node_done(nid)
