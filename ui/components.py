@@ -27,6 +27,17 @@ _DISCOVERY_QUEUE: list = []
 _CURRENT_DISCOVERY_PIDX: list[int | None] = [None]
 
 
+def _discovery_selection_label(res: dict) -> str:
+    """Return a human-readable selection label for the discovery popup."""
+    custom = res.get("sel_custom_name", "").strip()
+    if custom:
+        return custom
+    exprs = res.get("sel_exprs", [])
+    if exprs:
+        return " AND ".join(exprs)
+    return ""
+
+
 def _show_next_discovery() -> None:
     if not _DISCOVERY_QUEUE or not dpg.does_item_exist("discovery_window"):
         if dpg.does_item_exist("discovery_window"):
@@ -34,15 +45,21 @@ def _show_next_discovery() -> None:
         return
     pidx, res = _DISCOVERY_QUEUE.pop(0)
     _CURRENT_DISCOVERY_PIDX[0] = pidx
-    hist_name = res.get("node_name", "").strip() or f"Histogram {pidx + 1}"
+
+    x_label  = res.get("x_label", "").strip() or f"Histogram {pidx + 1}"
+    sel_label = _discovery_selection_label(res)
+
+    detail_lines = [f"Observable: {x_label}"]
+    if sel_label:
+        detail_lines.append(f"Selection: {sel_label}")
+    detail_lines.append(f"Signal strength (mu): {res['mu']}")
+
     if dpg.does_item_exist("discovery_title_text"):
         dpg.set_value("discovery_title_text",
                       "Discovery! The process has been observed with "
                       f"{res['sig']} sigma significance.")
     if dpg.does_item_exist("discovery_detail_text"):
-        dpg.set_value("discovery_detail_text",
-                      f"Histogram of discovery: {hist_name}\n"
-                      f"Signal strength (mu): {res['mu']}")
+        dpg.set_value("discovery_detail_text", "\n".join(detail_lines))
     if dpg.does_item_exist("discovery_process_name_input"):
         dpg.set_value("discovery_process_name_input",
                       _NAMED_PROCESSES.get(pidx, ""))

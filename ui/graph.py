@@ -1643,6 +1643,7 @@ def compile_graph_topology() -> dict:
         selections.append({
             "nid": sel_nid,
             "node_name": sel_name if sel_name else f"Selection {len(selections) + 1}",
+            "sel_custom_name": sel_name,   # empty string when not explicitly named
             "sel_exprs": sel_exprs,
             "h5_sel": h5_sel,
             "histograms": histograms,

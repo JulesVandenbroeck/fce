@@ -61,8 +61,13 @@ def execute_analysis(cfg, _unused):
         selections = cfg.get("selections")
         if selections:
             for sel_cfg in selections:
+                _sel_custom = sel_cfg.get("sel_custom_name", "")
+                _sel_exprs  = sel_cfg.get("sel_exprs", [])
                 for hcfg in sel_cfg["histograms"]:
-                    fit_candidates.append(hcfg)
+                    candidate = dict(hcfg)
+                    candidate["sel_custom_name"] = _sel_custom
+                    candidate["sel_exprs"]       = _sel_exprs
+                    fit_candidates.append(candidate)
         else:
             fit_candidates = cfg.get("histograms", [{
                 "observable": cfg["observable"],
@@ -91,9 +96,12 @@ def execute_analysis(cfg, _unused):
                 if mu is not None:
                     plot_idx = hcfg.get("plot_idx", 0)
                     fit_results[plot_idx] = {
-                        "mu":        mu,
-                        "sig":       sig,
-                        "node_name": hcfg.get("node_name", ""),
+                        "mu":             mu,
+                        "sig":            sig,
+                        "node_name":      hcfg.get("node_name", ""),
+                        "x_label":        hcfg.get("x_label", ""),
+                        "sel_custom_name": hcfg.get("sel_custom_name", ""),
+                        "sel_exprs":       hcfg.get("sel_exprs", []),
                     }
             except Exception as fit_err:
                 safe_set_state("status_msg", f"Fit error: {fit_err}")
