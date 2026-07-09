@@ -61,8 +61,13 @@ def execute_analysis(cfg, _unused):
         selections = cfg.get("selections")
         if selections:
             for sel_cfg in selections:
+                _sel_custom = sel_cfg.get("sel_custom_name", "")
+                _sel_exprs  = sel_cfg.get("sel_exprs", [])
                 for hcfg in sel_cfg["histograms"]:
-                    fit_candidates.append(hcfg)
+                    candidate = dict(hcfg)
+                    candidate["sel_custom_name"] = _sel_custom
+                    candidate["sel_exprs"]       = _sel_exprs
+                    fit_candidates.append(candidate)
         else:
             fit_candidates = cfg.get("histograms", [{
                 "observable": cfg["observable"],
@@ -78,6 +83,7 @@ def execute_analysis(cfg, _unused):
             safe_set_state("current_phase", "Computing fit...")
             safe_set_state("progress", 0.95)
 
+        fit_results = {}
         for hcfg in fit_candidates:
             if hcfg.get("target", "None") in ("None", None, ""):
                 continue
@@ -87,11 +93,25 @@ def execute_analysis(cfg, _unused):
                 fit_cfg.update(hcfg)
                 mu, sig = run_fit(fit_cfg, samples, en,
                                   hist_idx=hcfg.get("plot_idx", 0))
-                safe_set_state("fit_mu",  mu)
-                safe_set_state("fit_sig", sig)
-                break  # expose first successful fit result in the UI
+                if mu is not None:
+                    plot_idx = hcfg.get("plot_idx", 0)
+                    fit_results[plot_idx] = {
+                        "mu":             mu,
+                        "sig":            sig,
+                        "node_name":      hcfg.get("node_name", ""),
+                        "x_label":        hcfg.get("x_label", ""),
+                        "sel_custom_name": hcfg.get("sel_custom_name", ""),
+                        "sel_exprs":       hcfg.get("sel_exprs", []),
+                    }
             except Exception as fit_err:
                 safe_set_state("status_msg", f"Fit error: {fit_err}")
+
+        # Legacy single-fit fields (first result) for backwards compat
+        if fit_results:
+            first = next(iter(fit_results.values()))
+            safe_set_state("fit_mu",  first["mu"])
+            safe_set_state("fit_sig", first["sig"])
+        safe_set_state("fit_results", fit_results)
 
         safe_set_state("current_phase", "")
         safe_set_state("progress", 1.0)

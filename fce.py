@@ -22,7 +22,9 @@ from ui.graph import (link_callback, delink_callback, create_node,
                       setup_link_handlers, on_node_editor_drop,
                       save_pipeline, load_pipeline)
 from ui.state import REGISTRY
-from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload, MAX_HIST_TEXTURES
+from ui.components import (trigger_analysis_pipeline, trigger_dataset_download,
+                           confirm_redownload, MAX_HIST_TEXTURES,
+                           save_discovery_process_name)
 from ui.state import update_run_state as _set_state
 from ui.tutorial import show_tutorial
 import ui.state as _ui_state
@@ -176,6 +178,27 @@ with dpg.window(tag="node_error_window", label="Node Error",
         label="Close",
         callback=lambda s, a, u: dpg.configure_item("node_error_window", show=False),
         width=80,
+    )
+
+# ── Discovery popup ──────────────────────────────────────────────────────────
+with dpg.window(tag="discovery_window", label="*** DISCOVERY ***",
+                modal=True, show=False, width=420, height=230,
+                no_resize=True):
+    dpg.add_spacer(height=10)
+    dpg.add_text("", tag="discovery_title_text", wrap=400)
+    dpg.add_spacer(height=6)
+    dpg.add_text("", tag="discovery_detail_text", wrap=400)
+    dpg.add_spacer(height=10)
+    dpg.add_text("Name this process:")
+    dpg.add_input_text(tag="discovery_process_name_input", width=-1,
+                       hint="e.g. Higgs boson")
+    dpg.add_spacer(height=10)
+    dpg.add_button(
+        label="Celebrate!",
+        callback=lambda: save_discovery_process_name(
+            dpg.get_value("discovery_process_name_input")
+        ),
+        width=-1, height=32,
     )
 
 
@@ -395,15 +418,6 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 height=42,
             )
             dpg.add_spacer(height=5)
-
-            with dpg.collapsing_header(
-                label="Statistical fit",
-                tag="stat_fit_header",
-                default_open=False,
-            ):
-                dpg.add_text("Best Fit Parameter: N/A",      tag="ui_txt_mu")
-                dpg.add_text("Discovery Significance: N/A",  tag="ui_txt_sig")
-
             dpg.add_spacer(height=6)
             with dpg.group(tag="plot_display_group"):
                 dpg.add_image(

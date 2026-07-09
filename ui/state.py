@@ -10,6 +10,7 @@ RUN_STATE = {
     "status_msg":      "Initialized.",
     "fit_mu":          None,
     "fit_sig":         None,
+    "fit_results":     {},      # {plot_idx: {"mu": float, "sig": float, "node_name": str}}
     "active_nodes":    set(),   # nids currently being processed (thread workers signal)
     "completed_nodes": set(),   # nids whose processing is finished (green)
     "current_phase":   "",      # short human-readable phase string for status label

@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import threading
 import dearpygui.dearpygui as dpg
@@ -16,6 +17,77 @@ FCE_DIR = get_fce_home()
 CURRENT_WORKER = None
 
 MAX_HIST_TEXTURES = 8
+
+# User-provided names for discovered processes: {plot_idx: str}
+_NAMED_PROCESSES: dict[int, str] = {}
+# Processes already discovered (no popup again this session): {plot_idx}
+_DISCOVERED_PIDS: set[int] = set()
+# Queue of (pidx, res) waiting to show discovery popups sequentially
+_DISCOVERY_QUEUE: list = []
+# Which plot_idx the currently open discovery popup refers to
+_CURRENT_DISCOVERY_PIDX: list[int | None] = [None]
+
+
+def _simplify_obs_label(label: str) -> str:
+    """Strip LaTeX formatting to plain ASCII suitable for DPG text display."""
+    s = re.sub(r'\[.*?\]', '', label)  # remove units: [GeV], [rad], …
+    s = s.replace('$', '')             # remove math delimiters
+    s = s.replace('_', '')             # remove subscript underscores
+    s = s.replace('\\', '')            # remove backslashes (\eta → eta)
+    return s.strip()
+
+
+def _discovery_selection_label(res: dict) -> str:
+    """Return a human-readable selection label for the discovery popup."""
+    custom = res.get("sel_custom_name", "").strip()
+    if custom:
+        return custom
+    exprs = res.get("sel_exprs", [])
+    if exprs:
+        return " AND ".join(exprs)
+    return ""
+
+
+def _show_next_discovery() -> None:
+    if not _DISCOVERY_QUEUE or not dpg.does_item_exist("discovery_window"):
+        if dpg.does_item_exist("discovery_window"):
+            dpg.configure_item("discovery_window", show=False)
+        return
+    pidx, res = _DISCOVERY_QUEUE.pop(0)
+    _CURRENT_DISCOVERY_PIDX[0] = pidx
+
+    x_label  = _simplify_obs_label(res.get("x_label", "")) or f"Histogram {pidx + 1}"
+    sel_label = _discovery_selection_label(res)
+
+    detail_lines = [f"Observable: {x_label}"]
+    if sel_label:
+        detail_lines.append(f"Selection: {sel_label}")
+    detail_lines.append(f"Signal strength (mu): {res['mu']}")
+
+    if dpg.does_item_exist("discovery_title_text"):
+        dpg.set_value("discovery_title_text",
+                      "Discovery! The process has been observed with "
+                      f"{res['sig']} sigma significance.")
+    if dpg.does_item_exist("discovery_detail_text"):
+        dpg.set_value("discovery_detail_text", "\n".join(detail_lines))
+    if dpg.does_item_exist("discovery_process_name_input"):
+        dpg.set_value("discovery_process_name_input",
+                      _NAMED_PROCESSES.get(pidx, ""))
+    vp_w = dpg.get_viewport_width()
+    vp_h = dpg.get_viewport_height()
+    dpg.set_item_pos("discovery_window", [(vp_w - 420) // 2, (vp_h - 230) // 2])
+    dpg.configure_item("discovery_window", show=True)
+    dpg.focus_item("discovery_window")
+
+
+def save_discovery_process_name(name: str) -> None:
+    pidx = _CURRENT_DISCOVERY_PIDX[0]
+    if pidx is not None:
+        if name.strip():
+            _NAMED_PROCESSES[pidx] = name.strip()
+        _DISCOVERED_PIDS.add(pidx)
+        _CURRENT_DISCOVERY_PIDX[0] = None
+    _show_next_discovery()
 
 
 def log_to_message_center(message_text):
@@ -50,8 +122,29 @@ def _load_png_to_texture(png_path: str, texture_tag: str) -> bool:
         return False
 
 
+def _add_fit_label(plot_idx: int, fit_results: dict, parent: str,
+                   multi_hist: bool = False) -> None:
+    """Insert a fit-result text block above a plot image."""
+    res = fit_results.get(plot_idx)
+    if res is None:
+        return
+    name = _NAMED_PROCESSES.get(plot_idx) or res.get("node_name", "").strip()
+    if multi_hist and name:
+        dpg.add_text(f"Statistical Fit: {name}", parent=parent)
+    elif multi_hist:
+        dpg.add_text(f"Statistical Fit: Histogram {plot_idx + 1}", parent=parent)
+    else:
+        dpg.add_text("Statistical Fit", parent=parent)
+    dpg.add_text(
+        f"  Signal Strength (mu): {res['mu']}    Significance: {res['sig']} sigma",
+        parent=parent,
+    )
+    dpg.add_spacer(height=2, parent=parent)
+
+
 def refresh_ui_canvas(selections_info: list | None = None,
-                      n_histograms: int = 1, hist_labels: list | None = None):
+                      n_histograms: int = 1, hist_labels: list | None = None,
+                      fit_results: dict | None = None):
     """Load plot PNGs into textures and rebuild the plot display group.
 
     selections_info: list of {"name": str, "plot_indices": [int]}, one per Selection
@@ -59,9 +152,12 @@ def refresh_ui_canvas(selections_info: list | None = None,
     (only when there are multiple selections).  Within each selection the plots are
     stacked without inner dropdowns.  Falls back to the legacy n_histograms /
     hist_labels behaviour when selections_info is None.
+    fit_results: {plot_idx: {"mu": float, "sig": float, "node_name": str}}
     """
     if not dpg.does_item_exist("plot_display_group"):
         return
+
+    fit_results = fit_results or {}
 
     # Collect all plot indices to load
     if selections_info:
@@ -93,7 +189,9 @@ def refresh_ui_canvas(selections_info: list | None = None,
                 default_open=True,
                 parent="plot_display_group",
             ):
+                multi = len(indices) > 1
                 for i in indices:
+                    _add_fit_label(i, fit_results, parent=dpg.last_item(), multi_hist=multi)
                     dpg.add_image(
                         f"plot_texture_buffer_{i}",
                         tag=f"canvas_view_frame_{i}",
@@ -106,7 +204,10 @@ def refresh_ui_canvas(selections_info: list | None = None,
             if selections_info
             else [i for i in all_indices if i in loaded]
         )
+        multi = len(indices) > 1
         if len(indices) == 1:
+            _add_fit_label(indices[0], fit_results, parent="plot_display_group",
+                           multi_hist=False)
             dpg.add_image(
                 f"plot_texture_buffer_{indices[0]}",
                 tag="canvas_view_frame_0",
@@ -115,6 +216,8 @@ def refresh_ui_canvas(selections_info: list | None = None,
             )
         else:
             for i in indices:
+                _add_fit_label(i, fit_results, parent="plot_display_group",
+                               multi_hist=multi)
                 dpg.add_image(
                     f"plot_texture_buffer_{i}",
                     tag=f"canvas_view_frame_{i}",
@@ -142,21 +245,25 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
             dpg.set_value("ui_progress_bar", 1.0)
             dpg.configure_item("ui_progress_bar", overlay="Done")
 
-            # Refresh plots using selections_info when available
+            # Refresh plots with fit results overlaid above each image
+            fit_results = safe_get_state("fit_results")
             sel_info = getattr(_frame_poll_callback, "_last_selections_info", None)
             n        = getattr(_frame_poll_callback, "_last_n_hist", 1)
             labels   = getattr(_frame_poll_callback, "_last_hist_labels", None)
-            refresh_ui_canvas(selections_info=sel_info,
-                              n_histograms=n, hist_labels=labels)
+            refresh_ui_canvas(selections_info=sel_info, n_histograms=n,
+                              hist_labels=labels, fit_results=fit_results)
             log_to_message_center("Completed.")
 
-            # Update fit results if available
-            mu  = safe_get_state("fit_mu")
-            sig = safe_get_state("fit_sig")
-            if mu is not None and dpg.does_item_exist("ui_txt_mu"):
-                dpg.set_value("ui_txt_mu", f"Best Fit Signal Strength: {mu}")
-            if sig is not None and dpg.does_item_exist("ui_txt_sig"):
-                dpg.set_value("ui_txt_sig", f"Discovery Significance: {sig} sigma")
+            # Discovery popup for new 5-sigma results (skip already-discovered)
+            to_discover = [
+                (pidx, res) for pidx, res in fit_results.items()
+                if res.get("sig") is not None and res["sig"] >= 5.0
+                and pidx not in _DISCOVERED_PIDS
+            ]
+            if to_discover:
+                _DISCOVERY_QUEUE.clear()
+                _DISCOVERY_QUEUE.extend(to_discover)
+                _show_next_discovery()
 
         # Apply final node colour states: completed nodes stay green;
         # nodes that were still active when stopped turn red.
@@ -270,12 +377,9 @@ def trigger_analysis_pipeline():
             return
 
     # Reset fit results from previous run
-    safe_set_state("fit_mu",  None)
-    safe_set_state("fit_sig", None)
-    if dpg.does_item_exist("ui_txt_mu"):
-        dpg.set_value("ui_txt_mu", "Best Fit Parameter: N/A")
-    if dpg.does_item_exist("ui_txt_sig"):
-        dpg.set_value("ui_txt_sig", "Discovery Significance: N/A")
+    safe_set_state("fit_mu",      None)
+    safe_set_state("fit_sig",     None)
+    safe_set_state("fit_results", {})
 
     safe_set_state("progress",       0.0)
     safe_set_state("running",        True)
@@ -284,6 +388,23 @@ def trigger_analysis_pipeline():
     safe_set_state("run_start_time", time.time())
 
     cfg = compile_graph_topology()
+
+    # Build a sample-key → process-name map from ALL named histograms so every
+    # plot's legend can reflect all discovered processes, not just its own.
+    _all_hcfgs = list(cfg.get("histograms", []))
+    for _sel in cfg.get("selections", []):
+        _all_hcfgs.extend(_sel.get("histograms", []))
+    _proc_map: dict[str, str] = {}
+    for _hcfg in _all_hcfgs:
+        _pidx = _hcfg.get("plot_idx", 0)
+        _tgt  = _hcfg.get("target", "")
+        if _tgt and _pidx in _NAMED_PROCESSES:
+            _proc_map[_tgt] = _NAMED_PROCESSES[_pidx]
+        if _pidx in _NAMED_PROCESSES:
+            _hcfg["process_name"] = _NAMED_PROCESSES[_pidx]
+    if _proc_map:
+        for _hcfg in _all_hcfgs:
+            _hcfg["process_names_map"] = _proc_map
 
     # Determine which selection caches are still valid so we can keep those
     # nodes green and only reset the ones that need reprocessing.
