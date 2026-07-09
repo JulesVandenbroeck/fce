@@ -8,6 +8,7 @@ dynamic = ["version"]
 description = "Future Collider Experiment Studio — HEP analysis tool for FCC-ee simulated data"
 authors = [
     {name = "Kirill Skovpen", email = "Kirill.Skovpen@cern.ch"},
+    {name = "Jules Vandenbroeck", email = "Jules.Vandenbroeck@cern.ch"},
 ]
 readme = "README.md"
 license = {file = "LICENSE"}
