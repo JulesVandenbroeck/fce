@@ -47,6 +47,31 @@ _VEC_RESULT_VARS = ["mass", "pt", "eta", "phi", "e"]
 
 _OBS_ROW_COUNT: dict[int, int] = {}  # nid -> current number of term rows
 
+# LaTeX label maps for typed Observable nodes (bare strings, wrapped in $...$ by builder)
+_OBJ_LATEX = {
+    "l1":  r"l_1",       "l2":  r"l_2",
+    "j1":  r"J_1",       "j2":  r"J_2",
+    "ph1": r"\gamma_1",  "ph2": r"\gamma_2",
+    "met": r"E_T^{miss}",
+}
+_VAR_LATEX = {
+    "pt":   (r"p_T",   "GeV"),
+    "eta":  (r"\eta",  ""),
+    "phi":  (r"\phi",  ""),
+    "e":    (r"E",     "GeV"),
+    "d0":   (r"d_0",   ""),
+    "z0":   (r"z_0",   ""),
+    "btag": ("b-tag",  ""),
+    "mass": (r"m",     "GeV"),
+}
+_GLOBAL_LATEX = {
+    "nlep":  r"N_{\ell}",
+    "nel":   r"N_e",
+    "nmu":   r"N_{\mu}",
+    "njets": r"N_j",
+    "nphot": r"N_{\gamma}",
+}
+
 _EXPR_TOOLTIP = (
     "Variables  (objects pt-sorted within type)\n"
     "  Counts  :  nlep  nel  nmu  njets  nphot\n"
@@ -768,6 +793,61 @@ def _build_obs_expr(nid: int, subtype: str):
     dpg.set_value(expr_tag, expr)
 
 
+def _build_obs_label(nid: int, subtype: str) -> str:
+    """Return a LaTeX-formatted x-axis label for a typed Observable node."""
+    n = _OBS_ROW_COUNT.get(nid, 1)
+
+    if subtype == "ObsGlobal":
+        terms = []
+        for i in range(n):
+            t = f"obs_g_var_{nid}_{i}"
+            if dpg.does_item_exist(t):
+                v = dpg.get_value(t).strip()
+                if v:
+                    terms.append(_GLOBAL_LATEX.get(v, v))
+        return ("$" + " + ".join(terms) + "$") if terms else "Observable"
+
+    elif subtype == "ObsObject":
+        term_strs, units = [], set()
+        for i in range(n):
+            ot, vt = f"obs_o_obj_{nid}_{i}", f"obs_o_var_{nid}_{i}"
+            if dpg.does_item_exist(ot) and dpg.does_item_exist(vt):
+                obj = dpg.get_value(ot)
+                var = dpg.get_value(vt)
+                if obj and var:
+                    obj_lx          = _OBJ_LATEX.get(obj, obj)
+                    var_lx, unit    = _VAR_LATEX.get(var, (var, ""))
+                    term_strs.append(rf"{var_lx}({obj_lx})")
+                    if unit:
+                        units.add(unit)
+        if not term_strs:
+            return "Observable"
+        label = "$" + " + ".join(term_strs) + "$"
+        if len(units) == 1:
+            label += f" [{units.pop()}]"
+        return label
+
+    elif subtype == "ObsVectorSum":
+        n_v = _OBS_ROW_COUNT.get(nid, 2)
+        res_t = f"obs_v_res_{nid}"
+        result_var = dpg.get_value(res_t) if dpg.does_item_exist(res_t) else "mass"
+        res_lx, unit = _VAR_LATEX.get(result_var, (result_var, ""))
+        objs = []
+        for i in range(n_v):
+            ot = f"obs_v_obj_{nid}_{i}"
+            if dpg.does_item_exist(ot):
+                o = dpg.get_value(ot)
+                if o:
+                    objs.append(_OBJ_LATEX.get(o, o))
+        objs_str = ", ".join(objs) if objs else r"l_1, l_2"
+        label = f"${res_lx}({objs_str})$"
+        if unit:
+            label += f" [{unit}]"
+        return label
+
+    return ""
+
+
 def _obs_obj_change(nid: int, row_idx: int, obj_val: str):
     """Update variable combo when object selection changes."""
     var_tag = f"obs_o_var_{nid}_{row_idx}"
@@ -1426,9 +1506,11 @@ def compile_graph_topology() -> dict:
         if obs_ntype in ("Observable", "ObsCustom"):
             observable = (dpg.get_value(f"txt_obs_{obs_nid}").strip()
                           if dpg.does_item_exist(f"txt_obs_{obs_nid}") else "met.pt")
+            x_label = observable
         else:
             observable = (dpg.get_value(f"obs_expr_{obs_nid}")
                           if dpg.does_item_exist(f"obs_expr_{obs_nid}") else "met.pt")
+            x_label = _build_obs_label(obs_nid, obs_ntype)
         target  = (dpg.get_value(f"cb_target_{hist_nid}")
                    if dpg.does_item_exist(f"cb_target_{hist_nid}") else "None")
         bins    = (str(dpg.get_value(f"txt_bins_{hist_nid}"))
@@ -1439,7 +1521,8 @@ def compile_graph_topology() -> dict:
                    if dpg.does_item_exist(f"txt_range_max_{hist_nid}") else "150.0")
         node_name = REGISTRY.node_names.get(hist_nid, "")
         hcfg_raw = {
-            "observable": observable, "bins": bins, "min": rng_min, "max": rng_max,
+            "observable": observable, "x_label": x_label,
+            "bins": bins, "min": rng_min, "max": rng_max,
             "target": target, "node_name": node_name,
             "obs_nid": obs_nid, "hist_nid": hist_nid,
         }
