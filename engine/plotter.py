@@ -62,9 +62,11 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
     if has_ratio:
         fig, (ax, ax_ratio) = plt.subplots(
             2, 1, figsize=(6.36, 5.5), dpi=200,
-            gridspec_kw={"height_ratios": [3, 1]}, sharex=True,
+            gridspec_kw={"height_ratios": [3, 1], "hspace": 0}, sharex=True,
         )
-        fig.subplots_adjust(hspace=0.05)
+        ax.spines["bottom"].set_visible(False)
+        ax.tick_params(axis="x", bottom=False, labelbottom=False)
+        ax_ratio.spines["top"].set_visible(False)
     else:
         fig, ax = plt.subplots(figsize=(6.36, 4.54), dpi=200)
         ax_ratio = None
