@@ -11,8 +11,10 @@ __pycache__/
 dist/
 build/
 
-# Claude Code session memory
+# Claude Code files (local only)
 .claude/
+CLAUDE.md
+prompt.md
 
 # macOS
 .DS_Store
