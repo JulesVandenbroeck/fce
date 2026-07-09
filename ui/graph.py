@@ -1739,3 +1739,61 @@ def check_pipeline_connectivity() -> list[int]:
                 error_nids.append(nid)
 
     return list(set(error_nids))
+
+
+# ---------------------------------------------------------------------------
+# Pipeline save / load
+# ---------------------------------------------------------------------------
+
+def save_pipeline(path: str):
+    """Serialize the current node graph to a JSON file."""
+    import json
+
+    nodes = []
+    for nid in sorted(REGISTRY.nodes.keys()):
+        snap = _snapshot_node(nid)
+        if snap:
+            nodes.append(snap)
+
+    seen_pairs: set = set()
+    links = []
+    for lid in list(REGISTRY.links.keys()):
+        snap = _snapshot_link(lid)
+        if snap:
+            pair = (snap["src_nid"], snap["dst_nid"])
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
+                links.append(snap)
+
+    data = {
+        "version": 1,
+        "next_id": REGISTRY.next_id,
+        "nodes": nodes,
+        "links": links,
+    }
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def load_pipeline(path: str):
+    """Clear the canvas and restore a node graph from a JSON file."""
+    import json
+
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    for nid in list(REGISTRY.nodes.keys()):
+        delete_node(nid, _push_undo=False)
+    _UNDO_HISTORY.clear()
+
+    REGISTRY.next_id = data.get("next_id", 0)
+
+    # Restore nodes first (without embedded links so order doesn't matter)
+    for snap in data.get("nodes", []):
+        snap_copy = dict(snap)
+        snap_copy["links"] = []
+        _restore_node(snap_copy)
+
+    # Restore all links once every node exists
+    for link_snap in data.get("links", []):
+        _restore_link(link_snap)

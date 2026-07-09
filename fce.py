@@ -18,7 +18,9 @@ import numpy as np
 import dearpygui.dearpygui as dpg
 from PIL import Image
 
-from ui.graph import link_callback, delink_callback, create_node, setup_link_handlers, on_node_editor_drop
+from ui.graph import (link_callback, delink_callback, create_node,
+                      setup_link_handlers, on_node_editor_drop,
+                      save_pipeline, load_pipeline)
 from ui.state import REGISTRY
 from ui.components import trigger_analysis_pipeline, trigger_dataset_download, confirm_redownload, MAX_HIST_TEXTURES
 from ui.state import update_run_state as _set_state
@@ -179,6 +181,51 @@ with dpg.window(tag="node_error_window", label="Node Error",
 
 # ── Window show helpers ───────────────────────────────────────────────────────
 
+def _on_save_pipeline(sender, app_data):
+    path = (app_data or {}).get("file_path_name", "").strip()
+    if not path:
+        return
+    if not path.lower().endswith(".json"):
+        path += ".json"
+    from ui.components import log_to_message_center
+    try:
+        save_pipeline(path)
+        log_to_message_center(f"Pipeline saved: {path}")
+    except Exception as e:
+        log_to_message_center(f"Save failed: {e}")
+
+
+def _on_load_pipeline(sender, app_data):
+    path = (app_data or {}).get("file_path_name", "").strip()
+    if not path or not os.path.exists(path):
+        return
+    from ui.components import log_to_message_center
+    try:
+        load_pipeline(path)
+        log_to_message_center(f"Pipeline loaded: {path}")
+    except Exception as e:
+        log_to_message_center(f"Load failed: {e}")
+
+
+# ── File dialogs (Save / Load pipeline) ──────────────────────────────────────
+with dpg.file_dialog(
+    directory_selector=False, show=False,
+    callback=_on_save_pipeline, width=700, height=400,
+    tag="save_pipeline_dialog", modal=True,
+    default_filename="pipeline.json",
+):
+    dpg.add_file_extension(".json", color=(255, 255, 100, 255))
+    dpg.add_file_extension("", color=(150, 150, 150, 255))
+
+with dpg.file_dialog(
+    directory_selector=False, show=False,
+    callback=_on_load_pipeline, width=700, height=400,
+    tag="load_pipeline_dialog", modal=True,
+):
+    dpg.add_file_extension(".json", color=(255, 255, 100, 255))
+    dpg.add_file_extension("", color=(150, 150, 150, 255))
+
+
 def _show_about_window(sender=None, app_data=None, user_data=None):
     vp_w = dpg.get_viewport_width()
     vp_h = dpg.get_viewport_height()
@@ -202,6 +249,15 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
     with dpg.viewport_menu_bar():
 
         with dpg.menu(label="File"):
+            dpg.add_menu_item(
+                label="Save Pipeline...",
+                callback=lambda: dpg.configure_item("save_pipeline_dialog", show=True),
+            )
+            dpg.add_menu_item(
+                label="Load Pipeline...",
+                callback=lambda: dpg.configure_item("load_pipeline_dialog", show=True),
+            )
+            dpg.add_separator()
             dpg.add_menu_item(label="Exit", callback=lambda: dpg.stop_dearpygui())
 
         # Data menu: per-detector/energy downloads
