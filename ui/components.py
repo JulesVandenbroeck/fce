@@ -228,9 +228,14 @@ def trigger_analysis_pipeline():
         dpg.configure_item("btn_trigger", label="Stopping...", enabled=False)
         return
 
-    required = ["DataSource", "Multiplicity", "Selection", "Observable", "Histogram"]
+    _OBS_TYPES = {"Observable", "ObsGlobal", "ObsObject", "ObsVectorSum", "ObsCustom"}
     present  = set(REGISTRY.nodes.values())
-    missing  = [t for t in required if t not in present]
+    missing  = []
+    for t in ["DataSource", "Multiplicity", "Selection", "Histogram"]:
+        if t not in present:
+            missing.append(t)
+    if not (present & _OBS_TYPES):
+        missing.append("Observable")
     if missing:
         log_to_message_center(
             f"Pipeline incomplete — missing: {', '.join(missing)}"

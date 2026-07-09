@@ -20,6 +20,58 @@ SEL_ALL_VARS = [
 
 _SEL_MAX_SUGS = 5
 
+# ---------------------------------------------------------------------------
+# Typed Observable node catalogues
+# ---------------------------------------------------------------------------
+
+_OBS_TYPES = {"ObsGlobal", "ObsObject", "ObsVectorSum", "ObsCustom", "Observable"}
+
+
+def _is_obs(ntype: str) -> bool:
+    return ntype in _OBS_TYPES
+
+
+_GLOBAL_VARS = ["nlep", "nel", "nmu", "njets", "nphot"]
+
+_OBJ_VARS = {
+    "l1":  ["pt", "eta", "phi", "e", "d0", "z0"],
+    "l2":  ["pt", "eta", "phi", "e", "d0", "z0"],
+    "j1":  ["pt", "eta", "phi", "e", "btag"],
+    "j2":  ["pt", "eta", "phi", "e", "btag"],
+    "ph1": ["pt", "eta", "phi", "e"],
+    "ph2": ["pt", "eta", "phi", "e"],
+    "met": ["pt", "eta", "phi", "e"],
+}
+
+_VEC_RESULT_VARS = ["mass", "pt", "eta", "phi", "e"]
+
+_OBS_ROW_COUNT: dict[int, int] = {}  # nid -> current number of term rows
+
+# LaTeX label maps for typed Observable nodes (bare strings, wrapped in $...$ by builder)
+_OBJ_LATEX = {
+    "l1":  r"l_1",       "l2":  r"l_2",
+    "j1":  r"J_1",       "j2":  r"J_2",
+    "ph1": r"\gamma_1",  "ph2": r"\gamma_2",
+    "met": r"E_T^{miss}",
+}
+_VAR_LATEX = {
+    "pt":   (r"p_T",   "GeV"),
+    "eta":  (r"\eta",  ""),
+    "phi":  (r"\phi",  ""),
+    "e":    (r"E",     "GeV"),
+    "d0":   (r"d_0",   ""),
+    "z0":   (r"z_0",   ""),
+    "btag": ("b-tag",  ""),
+    "mass": (r"m",     "GeV"),
+}
+_GLOBAL_LATEX = {
+    "nlep":  r"N_{\ell}",
+    "nel":   r"N_e",
+    "nmu":   r"N_{\mu}",
+    "njets": r"N_j",
+    "nphot": r"N_{\gamma}",
+}
+
 _EXPR_TOOLTIP = (
     "Variables  (objects pt-sorted within type)\n"
     "  Counts  :  nlep  nel  nmu  njets  nphot\n"
@@ -214,7 +266,7 @@ _UNDO_HISTORY: deque = deque(maxlen=10)
 _WIDGET_PREFIXES = (
     "cb_energy_", "cb_detector_",
     "cb_ltype_", "txt_leptons_", "txt_jets_", "txt_photons_",
-    "txt_sel_", "txt_obs_",
+    "txt_sel_", "txt_obs_", "obs_expr_",
     "cb_target_", "txt_bins_", "txt_range_min_", "txt_range_max_",
 )
 
@@ -260,6 +312,27 @@ def _snapshot_node(nid: int) -> dict | None:
         tag = f"{prefix}{nid}"
         if dpg.does_item_exist(tag):
             values[tag] = dpg.get_value(tag)
+    # For typed Observable nodes, save per-row combo values
+    n_rows = _OBS_ROW_COUNT.get(nid, 1)
+    if node_type == "ObsGlobal":
+        for i in range(n_rows):
+            t = f"obs_g_var_{nid}_{i}"
+            if dpg.does_item_exist(t):
+                values[t] = dpg.get_value(t)
+    elif node_type == "ObsObject":
+        for i in range(n_rows):
+            for pfx in (f"obs_o_obj_{nid}_{i}", f"obs_o_var_{nid}_{i}"):
+                if dpg.does_item_exist(pfx):
+                    values[pfx] = dpg.get_value(pfx)
+    elif node_type == "ObsVectorSum":
+        n_rows_v = _OBS_ROW_COUNT.get(nid, 2)
+        t = f"obs_v_res_{nid}"
+        if dpg.does_item_exist(t):
+            values[t] = dpg.get_value(t)
+        for i in range(n_rows_v):
+            t = f"obs_v_obj_{nid}_{i}"
+            if dpg.does_item_exist(t):
+                values[t] = dpg.get_value(t)
     links = []
     for _, (start_slot, end_slot) in REGISTRY.links.items():
         s = REGISTRY.slot_node.get(start_slot)
@@ -269,6 +342,7 @@ def _snapshot_node(nid: int) -> dict | None:
     return {
         'type': 'node', 'nid': nid, 'node_type': node_type,
         'pos': list(pos), 'name': name, 'values': values, 'links': links,
+        'obs_row_count': _OBS_ROW_COUNT.get(nid),
     }
 
 
@@ -301,12 +375,36 @@ def _restore_node(snap: dict):
     REGISTRY.next_id = max(old_next, nid + 1)
     if created is None:
         return
-    for tag, val in snap['values'].items():
+
+    ntype    = snap['node_type']
+    vals     = snap['values']
+    saved_n  = snap.get('obs_row_count')
+
+    # Rebuild typed Observable rows from the snapshot so extra rows are restored
+    if ntype == "ObsGlobal" and saved_n:
+        saved_vals = [vals.get(f"obs_g_var_{nid}_{i}", _GLOBAL_VARS[0])
+                      for i in range(saved_n)]
+        _obs_rebuild_global_rows(nid, saved_vals)
+    elif ntype == "ObsObject" and saved_n:
+        saved_pairs = [(vals.get(f"obs_o_obj_{nid}_{i}", "met"),
+                        vals.get(f"obs_o_var_{nid}_{i}", "pt"))
+                       for i in range(saved_n)]
+        _obs_rebuild_object_rows(nid, saved_pairs)
+    elif ntype == "ObsVectorSum" and saved_n:
+        saved_objs = [vals.get(f"obs_v_obj_{nid}_{i}", "l1") for i in range(saved_n)]
+        _obs_rebuild_vecsum_rows(nid, saved_objs)
+
+    for tag, val in vals.items():
         if dpg.does_item_exist(tag):
             try:
                 dpg.set_value(tag, val)
             except Exception:
                 pass
+
+    # For VectorSum, re-run expression build after obs_v_res_ is restored
+    if ntype == "ObsVectorSum":
+        _build_obs_expr(nid, "ObsVectorSum")
+
     for link_snap in snap['links']:
         _restore_link(link_snap)
 
@@ -561,7 +659,7 @@ def validate_node_expressions() -> list[tuple[int, str]]:
     for nid, ntype in REGISTRY.nodes.items():
         if ntype == "Selection":
             field = f"txt_sel_{nid}"
-        elif ntype == "Observable":
+        elif ntype in ("Observable", "ObsCustom"):
             field = f"txt_obs_{nid}"
         else:
             continue
@@ -600,7 +698,7 @@ def mark_nodes_from_pipeline_check(error_nids: list[int], all_nids: list[int]):
                 sid = _slot_id(f"slot_in_{nid}")
                 if sid is None or sid not in connected_ends:
                     parts.append("input not connected")
-            elif ntype == "Observable":
+            elif _is_obs(ntype):
                 sid = _slot_id(f"slot_out_{nid}")
                 if sid is None or sid not in connected_starts:
                     parts.append("output not connected (connect to a Histogram)")
@@ -650,6 +748,278 @@ def _on_expr_change(text: str, nid: int):
             dpg.configure_item(btn, label=sugs[si], show=True, user_data=(nid, sugs[si]))
         else:
             dpg.configure_item(btn, show=False)
+
+
+# ---------------------------------------------------------------------------
+# Typed Observable node helpers
+# ---------------------------------------------------------------------------
+
+def _build_obs_expr(nid: int, subtype: str):
+    """Rebuild the observable expression from combo widgets and store it."""
+    expr_tag = f"obs_expr_{nid}"
+    if not dpg.does_item_exist(expr_tag):
+        return
+    n = _OBS_ROW_COUNT.get(nid, 1)
+
+    if subtype == "ObsGlobal":
+        terms = []
+        for i in range(n):
+            t = f"obs_g_var_{nid}_{i}"
+            if dpg.does_item_exist(t):
+                v = dpg.get_value(t).strip()
+                if v:
+                    terms.append(v)
+        expr = " + ".join(terms) if terms else _GLOBAL_VARS[0]
+
+    elif subtype == "ObsObject":
+        terms = []
+        for i in range(n):
+            ot = f"obs_o_obj_{nid}_{i}"
+            vt = f"obs_o_var_{nid}_{i}"
+            if dpg.does_item_exist(ot) and dpg.does_item_exist(vt):
+                obj = dpg.get_value(ot)
+                var = dpg.get_value(vt)
+                if obj and var:
+                    terms.append(f"{obj}.{var}")
+        expr = " + ".join(terms) if terms else "met.pt"
+
+    elif subtype == "ObsVectorSum":
+        n_v = _OBS_ROW_COUNT.get(nid, 2)
+        res_t = f"obs_v_res_{nid}"
+        result_var = dpg.get_value(res_t) if dpg.does_item_exist(res_t) else "mass"
+        objs = []
+        for i in range(n_v):
+            ot = f"obs_v_obj_{nid}_{i}"
+            if dpg.does_item_exist(ot):
+                o = dpg.get_value(ot)
+                if o:
+                    objs.append(o)
+        if len(objs) >= 2:
+            p4_sum = " + ".join(f"{o}.p4" for o in objs)
+            expr = f"({p4_sum}).{result_var}"
+        elif len(objs) == 1:
+            expr = f"{objs[0]}.{result_var}"
+        else:
+            expr = f"(l1.p4 + l2.p4).{result_var}"
+
+    else:
+        return
+
+    dpg.set_value(expr_tag, expr)
+
+
+def _build_obs_label(nid: int, subtype: str) -> str:
+    """Return a LaTeX-formatted x-axis label for a typed Observable node."""
+    n = _OBS_ROW_COUNT.get(nid, 1)
+
+    if subtype == "ObsGlobal":
+        terms = []
+        for i in range(n):
+            t = f"obs_g_var_{nid}_{i}"
+            if dpg.does_item_exist(t):
+                v = dpg.get_value(t).strip()
+                if v:
+                    terms.append(_GLOBAL_LATEX.get(v, v))
+        return ("$" + " + ".join(terms) + "$") if terms else "Observable"
+
+    elif subtype == "ObsObject":
+        term_strs, units = [], set()
+        for i in range(n):
+            ot, vt = f"obs_o_obj_{nid}_{i}", f"obs_o_var_{nid}_{i}"
+            if dpg.does_item_exist(ot) and dpg.does_item_exist(vt):
+                obj = dpg.get_value(ot)
+                var = dpg.get_value(vt)
+                if obj and var:
+                    obj_lx          = _OBJ_LATEX.get(obj, obj)
+                    var_lx, unit    = _VAR_LATEX.get(var, (var, ""))
+                    term_strs.append(rf"{var_lx}({obj_lx})")
+                    if unit:
+                        units.add(unit)
+        if not term_strs:
+            return "Observable"
+        label = "$" + " + ".join(term_strs) + "$"
+        if len(units) == 1:
+            label += f" [{units.pop()}]"
+        return label
+
+    elif subtype == "ObsVectorSum":
+        n_v = _OBS_ROW_COUNT.get(nid, 2)
+        res_t = f"obs_v_res_{nid}"
+        result_var = dpg.get_value(res_t) if dpg.does_item_exist(res_t) else "mass"
+        res_lx, unit = _VAR_LATEX.get(result_var, (result_var, ""))
+        objs = []
+        for i in range(n_v):
+            ot = f"obs_v_obj_{nid}_{i}"
+            if dpg.does_item_exist(ot):
+                o = dpg.get_value(ot)
+                if o:
+                    objs.append(_OBJ_LATEX.get(o, o))
+        objs_str = ", ".join(objs) if objs else r"l_1, l_2"
+        label = f"${res_lx}({objs_str})$"
+        if unit:
+            label += f" [{unit}]"
+        return label
+
+    return ""
+
+
+def _obs_obj_change(nid: int, row_idx: int, obj_val: str):
+    """Update variable combo when object selection changes."""
+    var_tag = f"obs_o_var_{nid}_{row_idx}"
+    if not dpg.does_item_exist(var_tag):
+        return
+    valid_vars = _OBJ_VARS.get(obj_val, ["pt", "eta", "phi", "e"])
+    current = dpg.get_value(var_tag)
+    dpg.configure_item(var_tag, items=valid_vars)
+    if current not in valid_vars:
+        dpg.set_value(var_tag, valid_vars[0])
+    _build_obs_expr(nid, "ObsObject")
+
+
+def _obs_rebuild_global_rows(nid: int, values: list):
+    rows_grp = f"obs_g_rows_grp_{nid}"
+    if not dpg.does_item_exist(rows_grp):
+        return
+    dpg.delete_item(rows_grp, children_only=True)
+    n = max(1, len(values))
+    _OBS_ROW_COUNT[nid] = n
+    for i, val in enumerate(values):
+        row = dpg.add_group(horizontal=True, tag=f"obs_g_row_{nid}_{i}", parent=rows_grp)
+        dpg.add_combo(
+            _GLOBAL_VARS,
+            default_value=val if val in _GLOBAL_VARS else _GLOBAL_VARS[0],
+            tag=f"obs_g_var_{nid}_{i}", width=100,
+            callback=lambda s, a, u: _build_obs_expr(u, "ObsGlobal"),
+            user_data=nid, parent=row,
+        )
+        if i < n - 1:
+            dpg.add_text("+", parent=row)
+        if n > 1:
+            dpg.add_button(
+                label="x", small=True, parent=row,
+                callback=lambda s, a, u: _obs_delete_global_row(u[0], u[1]),
+                user_data=(nid, i),
+            )
+    _build_obs_expr(nid, "ObsGlobal")
+
+
+def _obs_rebuild_object_rows(nid: int, pairs: list):
+    rows_grp = f"obs_o_rows_grp_{nid}"
+    if not dpg.does_item_exist(rows_grp):
+        return
+    dpg.delete_item(rows_grp, children_only=True)
+    n = max(1, len(pairs))
+    _OBS_ROW_COUNT[nid] = n
+    for i, (obj, var) in enumerate(pairs):
+        valid_objs = list(_OBJ_VARS.keys())
+        if obj not in valid_objs:
+            obj = "met"
+        valid_vars = _OBJ_VARS.get(obj, ["pt", "eta", "phi", "e"])
+        if var not in valid_vars:
+            var = valid_vars[0]
+        row = dpg.add_group(horizontal=True, tag=f"obs_o_row_{nid}_{i}", parent=rows_grp)
+        dpg.add_combo(
+            valid_objs, default_value=obj,
+            tag=f"obs_o_obj_{nid}_{i}", width=55,
+            callback=lambda s, a, u: _obs_obj_change(u[0], u[1], a),
+            user_data=(nid, i), parent=row,
+        )
+        dpg.add_combo(
+            valid_vars, default_value=var,
+            tag=f"obs_o_var_{nid}_{i}", width=60,
+            callback=lambda s, a, u: _build_obs_expr(u, "ObsObject"),
+            user_data=nid, parent=row,
+        )
+        if i < n - 1:
+            dpg.add_text("+", parent=row)
+        if n > 1:
+            dpg.add_button(
+                label="x", small=True, parent=row,
+                callback=lambda s, a, u: _obs_delete_object_row(u[0], u[1]),
+                user_data=(nid, i),
+            )
+    _build_obs_expr(nid, "ObsObject")
+
+
+def _obs_rebuild_vecsum_rows(nid: int, values: list):
+    rows_grp = f"obs_v_rows_grp_{nid}"
+    if not dpg.does_item_exist(rows_grp):
+        return
+    dpg.delete_item(rows_grp, children_only=True)
+    obj_keys = list(_OBJ_VARS.keys())
+    n = max(2, len(values))
+    while len(values) < n:
+        values.append("l1")
+    _OBS_ROW_COUNT[nid] = n
+    for i, val in enumerate(values):
+        row = dpg.add_group(horizontal=True, tag=f"obs_v_row_{nid}_{i}", parent=rows_grp)
+        dpg.add_combo(
+            obj_keys, default_value=val if val in obj_keys else "l1",
+            tag=f"obs_v_obj_{nid}_{i}", width=55,
+            callback=lambda s, a, u: _build_obs_expr(u, "ObsVectorSum"),
+            user_data=nid, parent=row,
+        )
+        if i < n - 1:
+            dpg.add_text("+", parent=row)
+        if n > 2:
+            dpg.add_button(
+                label="x", small=True, parent=row,
+                callback=lambda s, a, u: _obs_delete_vecsum_row(u[0], u[1]),
+                user_data=(nid, i),
+            )
+    _build_obs_expr(nid, "ObsVectorSum")
+
+
+def _obs_delete_global_row(nid: int, row_idx: int):
+    n = _OBS_ROW_COUNT.get(nid, 1)
+    if n <= 1:
+        return
+    kept = [dpg.get_value(f"obs_g_var_{nid}_{i}")
+            for i in range(n) if i != row_idx and dpg.does_item_exist(f"obs_g_var_{nid}_{i}")]
+    _obs_rebuild_global_rows(nid, kept)
+
+
+def _obs_delete_object_row(nid: int, row_idx: int):
+    n = _OBS_ROW_COUNT.get(nid, 1)
+    if n <= 1:
+        return
+    kept = [(dpg.get_value(f"obs_o_obj_{nid}_{i}"), dpg.get_value(f"obs_o_var_{nid}_{i}"))
+            for i in range(n) if i != row_idx
+            and dpg.does_item_exist(f"obs_o_obj_{nid}_{i}")
+            and dpg.does_item_exist(f"obs_o_var_{nid}_{i}")]
+    _obs_rebuild_object_rows(nid, kept)
+
+
+def _obs_delete_vecsum_row(nid: int, row_idx: int):
+    n = _OBS_ROW_COUNT.get(nid, 2)
+    if n <= 2:
+        return
+    kept = [dpg.get_value(f"obs_v_obj_{nid}_{i}")
+            for i in range(n) if i != row_idx and dpg.does_item_exist(f"obs_v_obj_{nid}_{i}")]
+    _obs_rebuild_vecsum_rows(nid, kept)
+
+
+def _obs_add_global_row(nid: int):
+    n = _OBS_ROW_COUNT.get(nid, 1)
+    current = [dpg.get_value(f"obs_g_var_{nid}_{i}")
+               for i in range(n) if dpg.does_item_exist(f"obs_g_var_{nid}_{i}")]
+    _obs_rebuild_global_rows(nid, current + [_GLOBAL_VARS[0]])
+
+
+def _obs_add_object_row(nid: int):
+    n = _OBS_ROW_COUNT.get(nid, 1)
+    current = [(dpg.get_value(f"obs_o_obj_{nid}_{i}"), dpg.get_value(f"obs_o_var_{nid}_{i}"))
+               for i in range(n)
+               if dpg.does_item_exist(f"obs_o_obj_{nid}_{i}")
+               and dpg.does_item_exist(f"obs_o_var_{nid}_{i}")]
+    _obs_rebuild_object_rows(nid, current + [("l1", "pt")])
+
+
+def _obs_add_vecsum_row(nid: int):
+    n = _OBS_ROW_COUNT.get(nid, 2)
+    current = [dpg.get_value(f"obs_v_obj_{nid}_{i}")
+               for i in range(n) if dpg.does_item_exist(f"obs_v_obj_{nid}_{i}")]
+    _obs_rebuild_vecsum_rows(nid, current + ["l1"])
 
 
 def _make_expr_widgets(tag: str, default: str, hint: str,
@@ -773,12 +1143,57 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
             nid=nid, parent_tag=parent_tag, width=222,
         )
 
-    elif node_type == "Observable":
+    elif node_type in ("Observable", "ObsCustom"):
         _make_expr_widgets(
             tag=f"txt_obs_{nid}",
             default="met.pt",
             hint="e.g.  (l1.p4+l2.p4).mass",
             nid=nid, parent_tag=parent_tag, width=200,
+        )
+
+    elif node_type == "ObsGlobal":
+        dpg.add_input_text(
+            tag=f"obs_expr_{nid}", default_value=_GLOBAL_VARS[0],
+            show=False, parent=parent_tag,
+        )
+        dpg.add_group(tag=f"obs_g_rows_grp_{nid}", parent=parent_tag)
+        _obs_rebuild_global_rows(nid, [_GLOBAL_VARS[0]])
+        dpg.add_button(
+            label="+", small=True, parent=parent_tag,
+            callback=lambda s, a, u: _obs_add_global_row(u),
+            user_data=nid,
+        )
+
+    elif node_type == "ObsObject":
+        dpg.add_input_text(
+            tag=f"obs_expr_{nid}", default_value="met.pt",
+            show=False, parent=parent_tag,
+        )
+        dpg.add_group(tag=f"obs_o_rows_grp_{nid}", parent=parent_tag)
+        _obs_rebuild_object_rows(nid, [("met", "pt")])
+        dpg.add_button(
+            label="+", small=True, parent=parent_tag,
+            callback=lambda s, a, u: _obs_add_object_row(u),
+            user_data=nid,
+        )
+
+    elif node_type == "ObsVectorSum":
+        dpg.add_input_text(
+            tag=f"obs_expr_{nid}", default_value="(l1.p4 + l2.p4).mass",
+            show=False, parent=parent_tag,
+        )
+        dpg.add_combo(
+            _VEC_RESULT_VARS, default_value="mass",
+            tag=f"obs_v_res_{nid}", width=80,
+            callback=lambda s, a, u: _build_obs_expr(u, "ObsVectorSum"),
+            user_data=nid, parent=parent_tag,
+        )
+        dpg.add_group(tag=f"obs_v_rows_grp_{nid}", parent=parent_tag)
+        _obs_rebuild_vecsum_rows(nid, ["l1", "l2"])
+        dpg.add_button(
+            label="+", small=True, parent=parent_tag,
+            callback=lambda s, a, u: _obs_add_vecsum_row(u),
+            user_data=nid,
         )
 
     elif node_type == "Histogram":
@@ -875,7 +1290,7 @@ def _show_help_window(sender=None, app_data=None, user_data=None):
     dpg.focus_item("help_expr_window")
 
 
-_HAS_HELP = {"Selection", "Observable"}
+_HAS_HELP = {"Selection", "Observable", "ObsCustom"}
 
 # Estimated pixel width of the widest content widget per node type.
 # Used to right-align the × / ? buttons in the name row.
@@ -884,6 +1299,10 @@ _NODE_CONTENT_PX = {
     "Multiplicity": 200,
     "Selection":    250,
     "Observable":   228,
+    "ObsGlobal":    155,
+    "ObsObject":    160,
+    "ObsVectorSum": 170,
+    "ObsCustom":    228,
     "Histogram":    208,
 }
 _CHAR_PX   = 7   # approximate pixels per character (default DPG font ~13px)
@@ -1036,7 +1455,7 @@ def compile_graph_topology() -> dict:
     ds_nids  = [n for n, t in nodes.items() if t == "DataSource"]
     mul_nids = [n for n, t in nodes.items() if t == "Multiplicity"]
     sel_nids = [n for n, t in nodes.items() if t == "Selection"]
-    obs_nids = [n for n, t in nodes.items() if t == "Observable"]
+    obs_nids = [n for n, t in nodes.items() if _is_obs(t)]
 
     ds = ds_nids[0] if ds_nids else None
     energy   = dpg.get_value(f"cb_energy_{ds}")   if ds is not None else "91 GeV"
@@ -1099,7 +1518,7 @@ def compile_graph_topology() -> dict:
         e_nid = REGISTRY.slot_node.get(end_slot)
         if (s_nid is not None and e_nid is not None
                 and nodes.get(s_nid) == "Selection"
-                and nodes.get(e_nid) == "Observable"):
+                and _is_obs(nodes.get(e_nid))):
             obs_to_sel[e_nid] = s_nid
 
     # Find Observable -> Histogram pairs from graph links
@@ -1108,7 +1527,7 @@ def compile_graph_topology() -> dict:
         s_nid = REGISTRY.slot_node.get(start_slot)
         e_nid = REGISTRY.slot_node.get(end_slot)
         if (s_nid is not None and e_nid is not None
-                and nodes.get(s_nid) == "Observable"
+                and _is_obs(nodes.get(s_nid))
                 and nodes.get(e_nid) == "Histogram"):
             obs_hist_pairs.append((s_nid, e_nid))
 
@@ -1141,8 +1560,15 @@ def compile_graph_topology() -> dict:
     for obs_nid, hist_nid in obs_hist_pairs:
         sel_nid = obs_to_sel.get(obs_nid)
 
-        observable = (dpg.get_value(f"txt_obs_{obs_nid}").strip()
-                      if dpg.does_item_exist(f"txt_obs_{obs_nid}") else "met.pt")
+        obs_ntype = nodes.get(obs_nid)
+        if obs_ntype in ("Observable", "ObsCustom"):
+            observable = (dpg.get_value(f"txt_obs_{obs_nid}").strip()
+                          if dpg.does_item_exist(f"txt_obs_{obs_nid}") else "met.pt")
+            x_label = observable
+        else:
+            observable = (dpg.get_value(f"obs_expr_{obs_nid}")
+                          if dpg.does_item_exist(f"obs_expr_{obs_nid}") else "met.pt")
+            x_label = _build_obs_label(obs_nid, obs_ntype)
         target  = (dpg.get_value(f"cb_target_{hist_nid}")
                    if dpg.does_item_exist(f"cb_target_{hist_nid}") else "None")
         bins    = (str(dpg.get_value(f"txt_bins_{hist_nid}"))
@@ -1153,7 +1579,8 @@ def compile_graph_topology() -> dict:
                    if dpg.does_item_exist(f"txt_range_max_{hist_nid}") else "150.0")
         node_name = REGISTRY.node_names.get(hist_nid, "")
         hcfg_raw = {
-            "observable": observable, "bins": bins, "min": rng_min, "max": rng_max,
+            "observable": observable, "x_label": x_label,
+            "bins": bins, "min": rng_min, "max": rng_max,
             "target": target, "node_name": node_name,
             "obs_nid": obs_nid, "hist_nid": hist_nid,
         }
@@ -1294,7 +1721,7 @@ def check_pipeline_connectivity() -> list[int]:
             if sid is None or sid not in connected_ends:
                 error_nids.append(nid)
 
-        elif ntype == "Observable":
+        elif _is_obs(ntype):
             # Must have output to a Histogram and input from a Selection
             has_err = False
             sid = _slot_id(f"slot_out_{nid}")

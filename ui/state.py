@@ -19,19 +19,27 @@ RUN_STATE = {
 }
 
 NODE_HIERARCHY = {
-    "DataSource":   0,
-    "Multiplicity": 1,
-    "Selection":    2,
-    "Observable":   3,
-    "Histogram":    4,
+    "DataSource":    0,
+    "Multiplicity":  1,
+    "Selection":     2,
+    "Observable":    3,
+    "ObsGlobal":     3,
+    "ObsObject":     3,
+    "ObsVectorSum":  3,
+    "ObsCustom":     3,
+    "Histogram":     4,
 }
 
 NODE_LABELS = {
-    "DataSource":   "Data",
-    "Multiplicity": "Multiplicity",
-    "Selection":    "Selection",
-    "Observable":   "Observable",
-    "Histogram":    "Histogram",
+    "DataSource":    "Data",
+    "Multiplicity":  "Multiplicity",
+    "Selection":     "Selection",
+    "Observable":    "Observable",
+    "ObsGlobal":     "Observable",
+    "ObsObject":     "Observable",
+    "ObsVectorSum":  "Observable",
+    "ObsCustom":     "Observable",
+    "Histogram":     "Histogram",
 }
 
 

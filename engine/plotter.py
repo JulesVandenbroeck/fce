@@ -33,6 +33,7 @@ def render_plots(cfg, samples, en):
 
 def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
     observable_target = hcfg["observable"]
+    x_label = hcfg.get("x_label", observable_target)
     h_mc, s_mc, h_data = [], [], None
 
     if en in samples:
@@ -83,7 +84,7 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
     ax.text(1.0, 1.02, l_txt, transform=ax.transAxes, ha="right", va="bottom", fontsize=14)
 
     ax.tick_params(axis="both", labelsize=11)
-    ax.set_xlabel(observable_target, fontsize=14)
+    ax.set_xlabel(x_label, fontsize=14)
     ax.set_ylabel("Events / Bin", fontsize=14)
     ax.legend(loc="upper right", frameon=True, fontsize=12)
 
