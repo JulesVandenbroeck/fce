@@ -1,7 +1,7 @@
 # Future Collider Experiment Studio
 
 ## Prompt
-You are working on a learning tool for particle physics data analysis at The Future Collider Experiment. The goal is to implement UI based changes suggested by the user. The tool is based on a drag and drop coding structure in python using DearPyGui framework. The framework exists out of building blocks that can be connected to create a pipeline of data analysis strategy. The building blocks of the tool are Data, Multiplicity, Selection, Histogram, Observable. 
+You are working on a learning tool for particle physics data analysis at The Future Collider Experiment. The goal is to implement UI based changes suggested by the user. The tool is based on a drag and drop coding structure in python using DearPyGui framework. The framework exists out of building blocks that can be connected to create a pipeline of data analysis strategy. The building blocks of the tool are Data, Multiplicity, Selection, Histogram, and Observable (with four subtypes: Global, Object, Vector Sum, Custom).
 
 ## Rules
 - The main github branch is `main` and remote is `juvanden` (git@github.com:JulesVandenbroeck/fce.git). 
@@ -58,7 +58,11 @@ Nodes are connected left-to-right in a strict hierarchy enforced by `NODE_HIERAR
 | 0     | DataSource  | Data         | Selects energy (91/160/240/365 GeV) and detector (IDEA/CLD). Exactly one per graph. |
 | 1     | Multiplicity | Multiplicity | Minimum object counts: leptons (Any/Electron/Muon), jets, photons. Chainable (AND logic). |
 | 2     | Selection   | Selection    | Free-form boolean expression over physics variables. Chainable (AND logic). |
-| 3     | Observable  | Observable   | Arithmetic expression over physics objects for histogramming (e.g. `met.pt`). Multiple Observable nodes can connect to one Selection node (independent observables, shared selection cache). |
+| 3     | ObsGlobal   | Observable   | Event-level count observable (nlep, nel, nmu, njets, nphot). `+` button sums multiple terms; `x` removes a term. |
+| 3     | ObsObject   | Observable   | Per-object property (object combo + variable combo, filtered per type). `+` sums terms; `x` removes. Builds e.g. `l1.pt` or `l1.pt + l2.pt`. |
+| 3     | ObsVectorSum | Observable  | Combined 4-vector property. Result combo (mass/pt/eta/phi/e) + 2+ object rows. `+` adds objects; `x` removes when >2. Builds e.g. `(l1.p4 + l2.p4).mass`. |
+| 3     | ObsCustom   | Observable   | Free-text expression with autocomplete and `?` help (same as original Observable). |
+| 3     | Observable  | Observable   | Legacy free-text node (kept for undo compatibility). |
 | 4     | Histogram   | Histogram    | Sets bins, range min/max, and optional signal for statistical fit. Multiple Histogram nodes can connect to one Observable node, each producing a separate plot. Custom node name is used as the collapsing header label in multi-plot display. |
 
 Multiplicity and Selection nodes can be chained to themselves (AND logic). Multiple Observable nodes may share one Selection (fan-out). Multiple Histogram nodes may share one Observable (fan-out). Only one DataSource is allowed.
@@ -91,6 +95,16 @@ Available in Selection and Observable nodes:
    - Optional `run_fit()` computes signal strength mu and significance via `pyhf`.
 7. `_frame_poll_callback()` polls state every 6 frames, updating the progress bar and canvas.
 
+## Observable node internals
+
+- `_is_obs(ntype)` — predicate covering all five obs types; used throughout `graph.py` in place of `== "Observable"`.
+- `obs_expr_{nid}` — hidden `input_text` storing the built expression for typed nodes; read by `compile_graph_topology`. `ObsCustom`/legacy `Observable` still use `txt_obs_{nid}`.
+- `_build_obs_expr(nid, subtype)` — reads combo values, builds the expression string, writes to `obs_expr_{nid}`.
+- `_build_obs_label(nid, subtype)` — returns a LaTeX-formatted x-axis label (e.g. `$p_T(l_1)$ [GeV]`) stored as `x_label` in `hcfg`; used by `engine/plotter.py`.
+- `_OBS_ROW_COUNT: dict[int,int]` — tracks number of term rows per node.
+- Row management uses rebuild functions (`_obs_rebuild_global_rows`, `_obs_rebuild_object_rows`, `_obs_rebuild_vecsum_rows`) that delete all row-group children and recreate from a values list. Both add (`+` button) and delete (`x` button) use these rebuilds. `x` button only shown when row count exceeds the minimum (1 for Global/Object, 2 for VectorSum).
+- Snapshots include `obs_row_count`; `_restore_node` calls the rebuild function with saved values before the generic `set_value` pass so Ctrl+Z restores the full row state.
+
 ## Key state
 
 - `ui/state.py:REGISTRY` -- NodeRegistry tracking all node ids, types, links, slot mappings, and custom names (`node_names: dict[int, str]`).
@@ -104,7 +118,7 @@ Available in Selection and Observable nodes:
 - **Undo (Ctrl+Z)**: Restores the last deleted node or link. History depth is 10. Node undo also restores connected links and all widget values.
 - **Right-click on a link**: Deletes the hovered link (short click, < 5 px movement).
 - **Initial nodes**: Created pre-connected (DataSource → Multiplicity → Selection → Observable → Histogram) with named labels. `create_node()` accepts an optional `name` parameter.
-- **Node palette**: A fixed 70 px bar at the bottom of the window lists four draggable node templates (Multiplicity, Selection, Observable, Histogram). Drag any button onto the node editor canvas to create that node type at the drop position. Uses DPG native `drag_payload` on each button and `drop_callback` on the `node_editor_pane` child_window. Drop position is computed via `dpg.get_item_pos("node_editor_pane")` (screen-space origin) subtracted from `dpg.get_mouse_pos(local=False)`.
+- **Node palette**: A fixed 70 px bar at the bottom lists draggable node templates. Multiplicity, Selection, and Histogram are dragged directly. The Observable button opens a submenu (toggled via `palette_main_grp`/`palette_obs_grp` visibility) showing four draggable subtypes (Global, Object, Vec Sum, Custom) and a `< Back` button. Drop position is computed via `dpg.get_item_pos("node_editor_pane")` (screen-space origin) subtracted from `dpg.get_mouse_pos(local=False)`. Toggle functions `_show_obs_submenu` and `_show_main_palette` are defined in `fce.py`.
 - **Launch tutorial**: `ui/tutorial.py:show_tutorial()` is called via `dpg.set_frame_callback(frame=1, ...)` and shows a non-modal 640×310 px popup with 11 pages covering every feature. Navigation: `< Prev` (disabled on page 1), `Skip`, `Next >` (becomes `Finish` on the last page). Each page that references a specific UI element applies a gold DPG theme to it (`_tut_node_hl` for nodes, `_tut_item_hl` for buttons/headers/child-windows); highlight is cleared on page change, Skip, Finish, or X-close. All text is ASCII-only (DPG's default glyph range is Latin-1; characters above U+00FF render as `?`). Title+body live in a `child_window(height=-40)` so the nav bar is always pinned to the bottom. `ui/state.py:LARGE_FONT` holds the 20 px font used for the tutorial title.
 
 ## Testing approach
