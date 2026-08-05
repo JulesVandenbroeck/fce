@@ -772,6 +772,61 @@ def validate_node_expressions() -> list[tuple[int, str]]:
     return errors
 
 
+def check_selection_obs_bounds() -> list[str]:
+    """Return warning strings when an Observable uses l2/j2/ph2 but the
+    Selection expression linked upstream does not guarantee 2+ of that type.
+
+    Delegates pure logic to engine.path_filter.check_obs_bounds_for_selection
+    so that logic can be unit-tested without a live DPG context.
+    """
+    from engine.path_filter import check_obs_bounds_for_selection
+
+    nodes = REGISTRY.nodes
+
+    # Build successor map from links
+    node_successors: dict[int, list[int]] = {}
+    for _, (start_slot, end_slot) in REGISTRY.links.items():
+        s_nid = REGISTRY.slot_node.get(start_slot)
+        e_nid = REGISTRY.slot_node.get(end_slot)
+        if s_nid is not None and e_nid is not None:
+            node_successors.setdefault(s_nid, []).append(e_nid)
+
+    def _get_expr(nid: int, ntype: str) -> str:
+        if ntype in ("Observable", "ObsCustom"):
+            tag = f"txt_obs_{nid}"
+        elif _is_obs(ntype):
+            tag = f"obs_expr_{nid}"
+        else:
+            return ""
+        return dpg.get_value(tag).strip() if dpg.does_item_exist(tag) else ""
+
+    warnings: list[str] = []
+    for sel_nid, sel_type in nodes.items():
+        if sel_type != "Selection":
+            continue
+
+        sel_tag = f"txt_sel_{sel_nid}"
+        sel_expr = dpg.get_value(sel_tag).strip() if dpg.does_item_exist(sel_tag) else ""
+
+        # Collect Observable expressions reachable directly from this Selection
+        obs_exprs: list[str] = []
+        for succ_nid in node_successors.get(sel_nid, []):
+            succ_type = nodes.get(succ_nid)
+            if _is_obs(succ_type):
+                expr = _get_expr(succ_nid, succ_type)
+                if expr:
+                    obs_exprs.append(expr)
+
+        if not obs_exprs:
+            continue
+
+        sel_name = REGISTRY.node_names.get(sel_nid) or f"Selection {sel_nid}"
+        for w in check_obs_bounds_for_selection(sel_expr, obs_exprs):
+            warnings.append(f"[{sel_name}] {w}")
+
+    return warnings
+
+
 def mark_nodes_from_pipeline_check(error_nids: list[int], all_nids: list[int]):
     connected_starts = {s for s, _ in REGISTRY.links.values()}
     connected_ends   = {e for _, e in REGISTRY.links.values()}
@@ -1698,7 +1753,7 @@ def compile_graph_topology() -> dict:
     energy   = dpg.get_value(f"cb_energy_{ds}")   if ds is not None else "91 GeV"
     detector = dpg.get_value(f"cb_detector_{ds}") if ds is not None else "IDEA"
 
-    mult_cuts = []
+    mult_cuts_by_nid = {}
     for n in mul_nids:
         nlep  = int(dpg.get_value(f"txt_leptons_{n}"))
         njets = int(dpg.get_value(f"txt_jets_{n}"))
@@ -1707,7 +1762,8 @@ def compile_graph_topology() -> dict:
         op_lep  = dpg.get_value(f"cb_op_lep_{n}") if dpg.does_item_exist(f"cb_op_lep_{n}") else ">="
         op_jet  = dpg.get_value(f"cb_op_jet_{n}") if dpg.does_item_exist(f"cb_op_jet_{n}") else ">="
         op_phot = dpg.get_value(f"cb_op_phot_{n}") if dpg.does_item_exist(f"cb_op_phot_{n}") else ">="
-        mult_cuts.append((nlep, op_lep, njets, op_jet, ltype, nphot, op_phot))
+        mult_cuts_by_nid[n] = (nlep, op_lep, njets, op_jet, ltype, nphot, op_phot)
+    mult_cuts = list(mult_cuts_by_nid.values())
 
     # Build per-node successor/predecessor maps from all links
     node_successors   = {}  # nid -> [nid, ...]
@@ -1718,6 +1774,24 @@ def compile_graph_topology() -> dict:
         if s_nid is not None and e_nid is not None:
             node_successors.setdefault(s_nid, []).append(e_nid)
             node_predecessors.setdefault(e_nid, []).append(s_nid)
+
+    def _upstream_mult_cuts(prefix_chain):
+        """Return mult_cuts tuples for Multiplicity nodes upstream of prefix_chain[0]."""
+        root = prefix_chain[0]
+        visited: set = set()
+        queue = list(node_predecessors.get(root, []))
+        result = []
+        while queue:
+            nid = queue.pop(0)
+            if nid in visited:
+                continue
+            visited.add(nid)
+            if nodes.get(nid) == "Multiplicity" and nid in mult_cuts_by_nid:
+                result.append(mult_cuts_by_nid[nid])
+            for pred in node_predecessors.get(nid, []):
+                if pred not in visited:
+                    queue.append(pred)
+        return result
 
     # Selection branch roots: Selection nodes whose parent is NOT another Selection
     sel_branch_roots = [
@@ -1854,7 +1928,6 @@ def compile_graph_topology() -> dict:
     parent_sel_order.sort(key=_sel_sort_key)
 
     # Build selections list; each entry uses only the prefix chain for its parent sel_nid
-    mult_h5_base = energy + detector + str(mult_cuts)
     plot_idx = 0
     selections = []
 
@@ -1865,7 +1938,10 @@ def compile_graph_topology() -> dict:
             for n in prefix
             if dpg.does_item_exist(f"txt_sel_{n}") and dpg.get_value(f"txt_sel_{n}").strip()
         ]
-        h5_sel = hashlib.md5((mult_h5_base + str(sel_exprs)).encode()).hexdigest()
+        sel_mult_cuts = _upstream_mult_cuts(prefix)
+        h5_sel = hashlib.md5(
+            (energy + detector + str(sel_mult_cuts) + str(sel_exprs)).encode()
+        ).hexdigest()
 
         histograms = []
         for hcfg_raw in parent_sel_hists.get(sel_nid, []):
@@ -1883,6 +1959,7 @@ def compile_graph_topology() -> dict:
         selections.append({
             "nid": sel_nid,
             "prefix_nids": prefix,
+            "mult_cuts": sel_mult_cuts,
             "node_name": sel_name if sel_name else f"Selection {len(selections) + 1}",
             "sel_custom_name": sel_name,   # empty string when not explicitly named
             "sel_exprs": sel_exprs,
@@ -1891,9 +1968,12 @@ def compile_graph_topology() -> dict:
         })
 
     # Flatten for backward-compat fields (first selection, first histogram)
+    _fallback_h5_sel = hashlib.md5(
+        (energy + detector + str(mult_cuts)).encode()
+    ).hexdigest()
     first_sel  = selections[0] if selections else {
-        "sel_exprs": [], "h5_sel": hashlib.md5(mult_h5_base.encode()).hexdigest(),
-        "histograms": [],
+        "sel_exprs": [], "h5_sel": _fallback_h5_sel,
+        "mult_cuts": mult_cuts, "histograms": [],
     }
     first_hist = first_sel["histograms"][0] if first_sel["histograms"] else {
         "observable": "met.pt", "bins": "40", "min": "0.0", "max": "150.0",

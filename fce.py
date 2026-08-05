@@ -1,3 +1,20 @@
+from fce_studio import __version__
+import ui.state as _ui_state
+from ui.tutorial import show_tutorial
+from ui.state import update_run_state as _set_state
+from ui.components import (trigger_analysis_pipeline, trigger_dataset_download,
+                           confirm_redownload, MAX_HIST_TEXTURES,
+                           save_discovery_process_name)
+from ui.state import REGISTRY
+from ui.graph import (link_callback, delink_callback, create_node,
+                      setup_link_handlers, on_node_editor_drop,
+                      save_pipeline, load_pipeline,
+                      create_node_below_lowest, delete_unconnected_nodes,
+                      show_delete_unconnected_confirm)
+from PIL import Image
+import dearpygui.dearpygui as dpg
+import numpy as np
+from paths import get_fce_home, configure_cache_env
 import os
 import sys
 import shutil
@@ -11,26 +28,8 @@ if _pkg_parent not in sys.path:
 # Must run before dearpygui is imported: it redirects XDG_CACHE_HOME away
 # from unwritable locations before Mesa creates its GL context and tries
 # to set up a shader cache there.
-from paths import get_fce_home, configure_cache_env
 configure_cache_env()
 
-import numpy as np
-import dearpygui.dearpygui as dpg
-from PIL import Image
-
-from ui.graph import (link_callback, delink_callback, create_node,
-                      setup_link_handlers, on_node_editor_drop,
-                      save_pipeline, load_pipeline,
-                      create_node_below_lowest, delete_unconnected_nodes,
-                      show_delete_unconnected_confirm)
-from ui.state import REGISTRY
-from ui.components import (trigger_analysis_pipeline, trigger_dataset_download,
-                           confirm_redownload, MAX_HIST_TEXTURES,
-                           save_discovery_process_name)
-from ui.state import update_run_state as _set_state
-from ui.tutorial import show_tutorial
-import ui.state as _ui_state
-from fce_studio import __version__
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -74,9 +73,12 @@ with dpg.texture_registry():
                 _img = Image.open(_logo_path).convert("RGBA")
                 _img.thumbnail((80, 80), Image.Resampling.LANCZOS)
                 _canvas = Image.new("RGBA", (80, 80), (0, 0, 0, 0))
-                _canvas.paste(_img, ((80 - _img.width) // 2, (80 - _img.height) // 2))
-                _logo_buf = (np.array(_canvas, dtype=np.float32) / 255.0).ravel().tolist()
-                dpg.add_dynamic_texture(80, 80, _logo_buf, tag="fce_logo_texture")
+                _canvas.paste(_img, ((80 - _img.width) //
+                              2, (80 - _img.height) // 2))
+                _logo_buf = (np.array(_canvas, dtype=np.float32) /
+                             255.0).ravel().tolist()
+                dpg.add_dynamic_texture(
+                    80, 80, _logo_buf, tag="fce_logo_texture")
                 _logo_loaded = True
                 break
             except Exception:
@@ -175,6 +177,29 @@ with dpg.window(tag="help_expr_window", label="Expression Guide",
         width=100,
     )
 
+# ── Multiplicity bounds warning popup ────────────────────────────────────────
+with dpg.window(tag="mult_bounds_warn_window", label="Object Availability Warning",
+                modal=True, show=False, width=480, height=220, no_resize=True):
+    dpg.add_text("", tag="mult_bounds_warn_text", wrap=460)
+    dpg.add_spacer(height=10)
+    with dpg.group(horizontal=True):
+        dpg.add_button(
+            label="Run anyway",
+            tag="mult_bounds_run_btn",
+            callback=lambda: (
+                dpg.configure_item("mult_bounds_warn_window", show=False),
+                trigger_analysis_pipeline(_skip_bounds_check=True),
+            ),
+            width=140,
+        )
+        dpg.add_spacer(width=10)
+        dpg.add_button(
+            label="Cancel",
+            width=80,
+            callback=lambda: dpg.configure_item(
+                "mult_bounds_warn_window", show=False),
+        )
+
 # ── Re-download confirmation window ───────────────────────────────────────────
 with dpg.window(tag="redownload_confirm_window", label="Confirm Re-download",
                 modal=True, show=False, width=380, height=130, no_resize=True):
@@ -199,7 +224,8 @@ with dpg.window(tag="delete_unconnected_confirm_window",
             tag="delete_unconnected_yes_btn",
             callback=lambda: (
                 delete_unconnected_nodes(),
-                dpg.configure_item("delete_unconnected_confirm_window", show=False),
+                dpg.configure_item(
+                    "delete_unconnected_confirm_window", show=False),
             ),
             width=100,
         )
@@ -207,7 +233,8 @@ with dpg.window(tag="delete_unconnected_confirm_window",
         dpg.add_button(
             label="Cancel",
             width=80,
-            callback=lambda: dpg.configure_item("delete_unconnected_confirm_window", show=False),
+            callback=lambda: dpg.configure_item(
+                "delete_unconnected_confirm_window", show=False),
         )
 
 # ── About window ──────────────────────────────────────────────────────────────
@@ -238,7 +265,8 @@ with dpg.window(tag="node_error_window", label="Node Error",
     dpg.add_spacer(height=8)
     dpg.add_button(
         label="Close",
-        callback=lambda s, a, u: dpg.configure_item("node_error_window", show=False),
+        callback=lambda s, a, u: dpg.configure_item(
+            "node_error_window", show=False),
         width=80,
     )
 
@@ -251,7 +279,8 @@ with dpg.window(tag="discovery_window", label="*** DISCOVERY ***",
     dpg.add_spacer(height=4)
     dpg.add_text("", tag="discovery_detail_text", wrap=440)
     dpg.add_spacer(height=4)
-    dpg.add_text("", tag="discovery_hint_text", wrap=440, color=(180, 220, 180))
+    dpg.add_text("", tag="discovery_hint_text",
+                 wrap=440, color=(180, 220, 180))
     dpg.add_separator()
     dpg.add_spacer(height=4)
     dpg.add_text(
@@ -379,7 +408,8 @@ def _show_exercises_window(sender=None, app_data=None, user_data=None):
             dpg.add_spacer(height=6)
             dpg.add_button(
                 label="Close", width=90,
-                callback=lambda: dpg.configure_item("exercises_window", show=False),
+                callback=lambda: dpg.configure_item(
+                    "exercises_window", show=False),
             )
     vp_w = dpg.get_viewport_width()
     vp_h = dpg.get_viewport_height()
@@ -434,7 +464,8 @@ def _show_palette_help(sender=None, app_data=None, user_data=None):
             dpg.add_spacer(height=6)
             dpg.add_button(
                 label="Close", width=90,
-                callback=lambda: dpg.configure_item("palette_help_window", show=False),
+                callback=lambda: dpg.configure_item(
+                    "palette_help_window", show=False),
             )
     vp_w = dpg.get_viewport_width()
     vp_h = dpg.get_viewport_height()
@@ -463,14 +494,17 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
         with dpg.menu(label="File"):
             dpg.add_menu_item(
                 label="Save Pipeline...",
-                callback=lambda: dpg.configure_item("save_pipeline_dialog", show=True),
+                callback=lambda: dpg.configure_item(
+                    "save_pipeline_dialog", show=True),
             )
             dpg.add_menu_item(
                 label="Load Pipeline...",
-                callback=lambda: dpg.configure_item("load_pipeline_dialog", show=True),
+                callback=lambda: dpg.configure_item(
+                    "load_pipeline_dialog", show=True),
             )
             dpg.add_separator()
-            dpg.add_menu_item(label="Exit", callback=lambda: dpg.stop_dearpygui())
+            dpg.add_menu_item(
+                label="Exit", callback=lambda: dpg.stop_dearpygui())
 
         # Data menu: per-detector/energy downloads
         with dpg.menu(label="Data"):
@@ -590,7 +624,8 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     min_clamped=True,
                     max_clamped=True,
                     width=70,
-                    callback=lambda s, a, u: _set_state("n_workers", max(1, min(a, 8))),
+                    callback=lambda s, a, u: _set_state(
+                        "n_workers", max(1, min(a, 8))),
                 )
 
             # ── Per-worker progress bars (shown only when n_workers > 1) ──
@@ -645,7 +680,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     height=454,
                 )
             with dpg.collapsing_header(label="Console", default_open=True,
-                                        tag="console_header"):
+                                       tag="console_header"):
                 with dpg.child_window(
                     tag="console_scroll_container",
                     width=-1,
@@ -693,10 +728,11 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                                            callback=_show_palette_help)
                         dpg.add_spacer(width=10)
                         for _pt, _plabel in [("Multiplicity", "Multiplicity"),
-                                              ("Selection",    "Selection")]:
+                                             ("Selection",    "Selection")]:
                             _pbtn = dpg.add_button(
                                 label=_plabel, width=160, height=44,
-                                callback=lambda s, a, u: create_node_below_lowest(u),
+                                callback=lambda s, a, u: create_node_below_lowest(
+                                    u),
                                 user_data=_pt,
                             )
                             with dpg.drag_payload(parent=_pbtn, drag_data=_pt,
@@ -708,7 +744,8 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                                        callback=_show_obs_submenu)
                         dpg.add_spacer(width=8)
                         _pbtn = dpg.add_button(label="Histogram", width=160, height=44,
-                                               callback=lambda s, a, u: create_node_below_lowest(u),
+                                               callback=lambda s, a, u: create_node_below_lowest(
+                                                   u),
                                                user_data="Histogram")
                         with dpg.drag_payload(parent=_pbtn, drag_data="Histogram",
                                               label="  + Histogram  "):
@@ -722,12 +759,13 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                                        callback=_show_main_palette)
                         dpg.add_spacer(width=12)
                         for _pt, _pl in [("ObsGlobal",    "Global"),
-                                          ("ObsObject",    "Object"),
-                                          ("ObsVectorSum", "Vec Sum"),
-                                          ("ObsCustom",    "Custom")]:
+                                         ("ObsObject",    "Object"),
+                                         ("ObsVectorSum", "Vec Sum"),
+                                         ("ObsCustom",    "Custom")]:
                             _pb = dpg.add_button(
                                 label=_pl, width=130, height=44,
-                                callback=lambda s, a, u: create_node_below_lowest(u),
+                                callback=lambda s, a, u: create_node_below_lowest(
+                                    u),
                                 user_data=_pt,
                             )
                             with dpg.drag_payload(parent=_pb, drag_data=_pt,
@@ -786,7 +824,8 @@ if _large_font is not None:
 
 # ── Create initial nodes ──────────────────────────────────────────────────────
 _X_STEP = 310  # horizontal gap between nodes
-create_node("DataSource",   pos=[30,              100], name="IDEA 91 GeV data")
+create_node("DataSource",   pos=[
+            30,              100], name="IDEA 91 GeV data")
 create_node("Multiplicity", pos=[30 + _X_STEP,    100], name="2 leptons")
 create_node("Selection",    pos=[30 + _X_STEP * 2, 100], name="di-lepton")
 create_node("ObsVectorSum", pos=[30 + _X_STEP * 3, 100], name="Di-lepton mass")
@@ -821,8 +860,10 @@ dpg.create_viewport(
     width=1440,
     height=920,
     resizable=True,
-    small_icon=os.path.join(_HERE, "fce.ico") if os.path.exists(os.path.join(_HERE, "fce.ico")) else "",
-    large_icon=os.path.join(_HERE, "fce.ico") if os.path.exists(os.path.join(_HERE, "fce.ico")) else "",
+    small_icon=os.path.join(_HERE, "fce.ico") if os.path.exists(
+        os.path.join(_HERE, "fce.ico")) else "",
+    large_icon=os.path.join(_HERE, "fce.ico") if os.path.exists(
+        os.path.join(_HERE, "fce.ico")) else "",
 )
 dpg.setup_dearpygui()
 dpg.show_viewport()

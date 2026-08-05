@@ -72,6 +72,7 @@ def _process_sample(sel_cfg, s, idx, active_samples, cfg,
     branch_cfg["sel_exprs"] = sel_cfg["sel_exprs"]
     branch_cfg["compiled_sel_exprs"] = compiled_sel_exprs  # OPT-2
     branch_cfg["h5_sel"] = h5_sel
+    branch_cfg["mult_cuts"] = sel_cfg.get("mult_cuts", cfg.get("mult_cuts", []))
 
     if get_run_state("stop"):
         return False
@@ -195,7 +196,9 @@ def _process_sample(sel_cfg, s, idx, active_samples, cfg,
 
         outHist = hist()
         outHist.create(int(hcfg["bins"]), float(hcfg["min"]), float(hcfg["max"]))
-        fill_histogram_from_cache(sel_cache, outHist, hcfg["observable"])
+        fill_warnings = fill_histogram_from_cache(sel_cache, outHist, hcfg["observable"])
+        for _w in (fill_warnings or []):
+            update_run_state("status_msg", _w)
         write_final_histograms(hdir, s, hcfg["h5"], outHist, out_path)
 
     return True
