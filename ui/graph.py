@@ -1753,7 +1753,7 @@ def compile_graph_topology() -> dict:
     energy   = dpg.get_value(f"cb_energy_{ds}")   if ds is not None else "91 GeV"
     detector = dpg.get_value(f"cb_detector_{ds}") if ds is not None else "IDEA"
 
-    mult_cuts = []
+    mult_cuts_by_nid = {}
     for n in mul_nids:
         nlep  = int(dpg.get_value(f"txt_leptons_{n}"))
         njets = int(dpg.get_value(f"txt_jets_{n}"))
@@ -1762,7 +1762,8 @@ def compile_graph_topology() -> dict:
         op_lep  = dpg.get_value(f"cb_op_lep_{n}") if dpg.does_item_exist(f"cb_op_lep_{n}") else ">="
         op_jet  = dpg.get_value(f"cb_op_jet_{n}") if dpg.does_item_exist(f"cb_op_jet_{n}") else ">="
         op_phot = dpg.get_value(f"cb_op_phot_{n}") if dpg.does_item_exist(f"cb_op_phot_{n}") else ">="
-        mult_cuts.append((nlep, op_lep, njets, op_jet, ltype, nphot, op_phot))
+        mult_cuts_by_nid[n] = (nlep, op_lep, njets, op_jet, ltype, nphot, op_phot)
+    mult_cuts = list(mult_cuts_by_nid.values())
 
     # Build per-node successor/predecessor maps from all links
     node_successors   = {}  # nid -> [nid, ...]
@@ -1773,6 +1774,24 @@ def compile_graph_topology() -> dict:
         if s_nid is not None and e_nid is not None:
             node_successors.setdefault(s_nid, []).append(e_nid)
             node_predecessors.setdefault(e_nid, []).append(s_nid)
+
+    def _upstream_mult_cuts(prefix_chain):
+        """Return mult_cuts tuples for Multiplicity nodes upstream of prefix_chain[0]."""
+        root = prefix_chain[0]
+        visited: set = set()
+        queue = list(node_predecessors.get(root, []))
+        result = []
+        while queue:
+            nid = queue.pop(0)
+            if nid in visited:
+                continue
+            visited.add(nid)
+            if nodes.get(nid) == "Multiplicity" and nid in mult_cuts_by_nid:
+                result.append(mult_cuts_by_nid[nid])
+            for pred in node_predecessors.get(nid, []):
+                if pred not in visited:
+                    queue.append(pred)
+        return result
 
     # Selection branch roots: Selection nodes whose parent is NOT another Selection
     sel_branch_roots = [
@@ -1909,7 +1928,6 @@ def compile_graph_topology() -> dict:
     parent_sel_order.sort(key=_sel_sort_key)
 
     # Build selections list; each entry uses only the prefix chain for its parent sel_nid
-    mult_h5_base = energy + detector + str(mult_cuts)
     plot_idx = 0
     selections = []
 
@@ -1920,7 +1938,10 @@ def compile_graph_topology() -> dict:
             for n in prefix
             if dpg.does_item_exist(f"txt_sel_{n}") and dpg.get_value(f"txt_sel_{n}").strip()
         ]
-        h5_sel = hashlib.md5((mult_h5_base + str(sel_exprs)).encode()).hexdigest()
+        sel_mult_cuts = _upstream_mult_cuts(prefix)
+        h5_sel = hashlib.md5(
+            (energy + detector + str(sel_mult_cuts) + str(sel_exprs)).encode()
+        ).hexdigest()
 
         histograms = []
         for hcfg_raw in parent_sel_hists.get(sel_nid, []):
@@ -1938,6 +1959,7 @@ def compile_graph_topology() -> dict:
         selections.append({
             "nid": sel_nid,
             "prefix_nids": prefix,
+            "mult_cuts": sel_mult_cuts,
             "node_name": sel_name if sel_name else f"Selection {len(selections) + 1}",
             "sel_custom_name": sel_name,   # empty string when not explicitly named
             "sel_exprs": sel_exprs,
@@ -1946,9 +1968,12 @@ def compile_graph_topology() -> dict:
         })
 
     # Flatten for backward-compat fields (first selection, first histogram)
+    _fallback_h5_sel = hashlib.md5(
+        (energy + detector + str(mult_cuts)).encode()
+    ).hexdigest()
     first_sel  = selections[0] if selections else {
-        "sel_exprs": [], "h5_sel": hashlib.md5(mult_h5_base.encode()).hexdigest(),
-        "histograms": [],
+        "sel_exprs": [], "h5_sel": _fallback_h5_sel,
+        "mult_cuts": mult_cuts, "histograms": [],
     }
     first_hist = first_sel["histograms"][0] if first_sel["histograms"] else {
         "observable": "met.pt", "bins": "40", "min": "0.0", "max": "150.0",

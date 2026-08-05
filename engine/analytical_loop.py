@@ -72,6 +72,7 @@ def _process_sample(sel_cfg, s, idx, active_samples, cfg,
     branch_cfg["sel_exprs"] = sel_cfg["sel_exprs"]
     branch_cfg["compiled_sel_exprs"] = compiled_sel_exprs  # OPT-2
     branch_cfg["h5_sel"] = h5_sel
+    branch_cfg["mult_cuts"] = sel_cfg.get("mult_cuts", cfg.get("mult_cuts", []))
 
     if get_run_state("stop"):
         return False
