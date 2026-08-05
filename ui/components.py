@@ -490,6 +490,13 @@ def trigger_analysis_pipeline():
             hist_labels.append(name if name else f"Histogram {i + 1}")
         _frame_poll_callback._last_hist_labels = hist_labels
 
+    n_hists = len([nid for nid, t in REGISTRY.nodes.items() if t == "Histogram"])
+    if n_hists > MAX_HIST_TEXTURES:
+        log_to_message_center(
+            f"Warning: {n_hists} Histogram nodes configured but only "
+            f"{MAX_HIST_TEXTURES} can be displayed. Extra histograms will be skipped."
+        )
+
     dpg.configure_item("btn_trigger", label="Stop (Processing..)", enabled=True)
 
     CURRENT_WORKER = threading.Thread(target=execute_analysis, args=(cfg, None), daemon=True)
