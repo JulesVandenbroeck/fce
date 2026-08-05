@@ -1534,25 +1534,53 @@ def create_node_below_lowest(node_type: str):
     create_node(node_type, pos=[best_x, best_bottom + 50 if found else 100])
 
 
+def _unconnected_nids() -> list[int]:
+    """Return node IDs that have no links (DataSource excluded)."""
+    linked: set = set()
+    for _lid, (start_slot, end_slot) in REGISTRY.links.items():
+        s = REGISTRY.slot_node.get(start_slot)
+        e = REGISTRY.slot_node.get(end_slot)
+        if s is not None:
+            linked.add(s)
+        if e is not None:
+            linked.add(e)
+    return [
+        nid for nid, ntype in list(REGISTRY.nodes.items())
+        if nid not in linked and ntype != "DataSource"
+    ]
+
+
+def show_delete_unconnected_confirm():
+    """Show a confirmation dialog listing the nodes that would be deleted."""
+    to_delete = _unconnected_nids()
+    if not to_delete:
+        from ui.components import log_to_message_center
+        log_to_message_center("No unconnected nodes to delete.")
+        return
+    names = []
+    for nid in to_delete:
+        name = REGISTRY.node_names.get(nid, "").strip()
+        label = NODE_LABELS.get(REGISTRY.nodes.get(nid, ""), "?")
+        names.append(f'  {label}: "{name}"' if name else f"  {label}")
+    body = f"Delete {len(to_delete)} unconnected node(s)?\n\n" + "\n".join(names)
+    if dpg.does_item_exist("delete_unconnected_confirm_text"):
+        dpg.set_value("delete_unconnected_confirm_text", body)
+    if dpg.does_item_exist("delete_unconnected_confirm_window"):
+        vp_w = dpg.get_viewport_width()
+        vp_h = dpg.get_viewport_height()
+        dpg.set_item_pos("delete_unconnected_confirm_window",
+                         [(vp_w - 400) // 2, (vp_h - 160) // 2])
+        dpg.configure_item("delete_unconnected_confirm_window", show=True)
+        dpg.focus_item("delete_unconnected_confirm_window")
+
+
 def delete_unconnected_nodes():
     """Delete all unconnected nodes, storing a single batch undo entry.
 
     A single Ctrl+Z restores all nodes that were removed in one call.
     DataSource nodes are never deleted.
     """
-    linked_nids: set = set()
-    for _lid, (start_slot, end_slot) in REGISTRY.links.items():
-        s_nid = REGISTRY.slot_node.get(start_slot)
-        e_nid = REGISTRY.slot_node.get(end_slot)
-        if s_nid is not None:
-            linked_nids.add(s_nid)
-        if e_nid is not None:
-            linked_nids.add(e_nid)
-
-    to_delete = [
-        nid for nid, ntype in list(REGISTRY.nodes.items())
-        if nid not in linked_nids and ntype != "DataSource"
-    ]
+    to_delete = _unconnected_nids()
     if not to_delete:
         return
 

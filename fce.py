@@ -21,7 +21,8 @@ from PIL import Image
 from ui.graph import (link_callback, delink_callback, create_node,
                       setup_link_handlers, on_node_editor_drop,
                       save_pipeline, load_pipeline,
-                      create_node_below_lowest, delete_unconnected_nodes)
+                      create_node_below_lowest, delete_unconnected_nodes,
+                      show_delete_unconnected_confirm)
 from ui.state import REGISTRY
 from ui.components import (trigger_analysis_pipeline, trigger_dataset_download,
                            confirm_redownload, MAX_HIST_TEXTURES,
@@ -148,6 +149,29 @@ with dpg.window(tag="redownload_confirm_window", label="Confirm Re-download",
         dpg.add_spacer(width=10)
         dpg.add_button(label="Cancel", width=80,
                        callback=lambda: dpg.configure_item("redownload_confirm_window", show=False))
+
+# ── Delete Unconnected confirmation window ────────────────────────────────────
+with dpg.window(tag="delete_unconnected_confirm_window",
+                label="Delete Unconnected Nodes",
+                modal=True, show=False, width=400, height=160, no_resize=True):
+    dpg.add_text("", tag="delete_unconnected_confirm_text", wrap=380)
+    dpg.add_spacer(height=10)
+    with dpg.group(horizontal=True):
+        dpg.add_button(
+            label="Delete",
+            tag="delete_unconnected_yes_btn",
+            callback=lambda: (
+                delete_unconnected_nodes(),
+                dpg.configure_item("delete_unconnected_confirm_window", show=False),
+            ),
+            width=100,
+        )
+        dpg.add_spacer(width=10)
+        dpg.add_button(
+            label="Cancel",
+            width=80,
+            callback=lambda: dpg.configure_item("delete_unconnected_confirm_window", show=False),
+        )
 
 # ── About window ──────────────────────────────────────────────────────────────
 with dpg.window(tag="about_window", label="About",
@@ -576,7 +600,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     dpg.add_spacer(width=8)
                     dpg.add_button(label="Delete Unconnected", width=170, height=44,
                                    tag="btn_delete_unconnected",
-                                   callback=lambda: delete_unconnected_nodes())
+                                   callback=lambda: show_delete_unconnected_confirm())
 
 # ── Delete Unconnected button dark-red theme ──────────────────────────────────
 with dpg.theme(tag="delete_unconnected_theme"):
