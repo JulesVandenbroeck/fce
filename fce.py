@@ -215,32 +215,43 @@ with dpg.window(tag="node_error_window", label="Node Error",
 
 # ── Discovery popup ──────────────────────────────────────────────────────────
 with dpg.window(tag="discovery_window", label="*** DISCOVERY ***",
-                modal=True, show=False, width=420, height=260,
+                modal=True, show=False, width=460, height=320,
                 no_resize=True):
-    dpg.add_spacer(height=10)
-    dpg.add_text("", tag="discovery_title_text", wrap=400)
-    dpg.add_spacer(height=6)
-    dpg.add_text("", tag="discovery_detail_text", wrap=400)
-    dpg.add_spacer(height=10)
-    dpg.add_text("Give this process a name (optional):")
+    dpg.add_spacer(height=8)
+    dpg.add_text("", tag="discovery_title_text", wrap=440)
+    dpg.add_spacer(height=4)
+    dpg.add_text("", tag="discovery_detail_text", wrap=440)
+    dpg.add_spacer(height=4)
+    dpg.add_text("", tag="discovery_hint_text", wrap=440, color=(180, 220, 180))
+    dpg.add_separator()
+    dpg.add_spacer(height=4)
+    dpg.add_text(
+        "Statistical fit terms:\n"
+        "  Signal strength (mu): ratio of observed to predicted yield.\n"
+        "    mu = 1 means perfect agreement with the Standard Model.\n"
+        "  Significance (sigma): how many s.d. above the background-only\n"
+        "    hypothesis. 5 sigma is the particle physics discovery threshold.",
+        wrap=440, color=(160, 160, 160),
+    )
+    dpg.add_spacer(height=8)
+    dpg.add_text("Name this process:")
     dpg.add_input_text(tag="discovery_process_name_input", width=-1,
-                       hint="e.g. Z boson, Higgs boson, ...")
-    dpg.add_spacer(height=10)
+                       hint="e.g. Z boson, Higgs boson")
+    dpg.add_spacer(height=8)
     with dpg.group(horizontal=True):
         dpg.add_button(
             label="Confirm Name",
-            tag="btn_discovery_confirm",
+            tag="discovery_confirm_btn",
             callback=lambda: save_discovery_process_name(
                 dpg.get_value("discovery_process_name_input")
             ),
-            width=-2, height=32,
+            width=200, height=30,
         )
-        dpg.add_spacer(width=6)
+        dpg.add_spacer(width=8)
         dpg.add_button(
             label="Skip",
-            tag="btn_discovery_skip",
             callback=lambda: save_discovery_process_name(""),
-            width=70, height=32,
+            width=100, height=30,
         )
 
 
@@ -289,6 +300,64 @@ with dpg.file_dialog(
 ):
     dpg.add_file_extension(".json", color=(255, 255, 100, 255))
     dpg.add_file_extension("", color=(150, 150, 150, 255))
+
+
+_EXERCISES_TEXT = (
+    "Suggested exercise progression\n\n"
+    "Exercise 1 - Count leptons (Getting started)\n"
+    "  Goal  : Plot the lepton multiplicity distribution.\n"
+    "  Setup : Observable = Global > nlep, Histogram bins=6 range 0-6.\n"
+    "  Learn : How many leptons does each process typically produce?\n\n"
+    "Exercise 2 - Z boson mass peak (Resonance search)\n"
+    "  Goal  : Observe the Z boson as a peak in the di-lepton mass.\n"
+    "  Setup : Multiplicity >= 2 leptons; Observable = Vec Sum > mass\n"
+    "          (l1 + l2); Histogram bins=50 range 60-120 GeV.\n"
+    "  Learn : What is the Z boson mass? What is the peak width?\n\n"
+    "Exercise 3 - Lepton pT cut (Improving signal purity)\n"
+    "  Goal  : Reduce background by requiring hard leptons.\n"
+    "  Setup : Add Selection l1.pt > 20 and l2.pt > 10 after Multiplicity.\n"
+    "  Learn : How does the cut change the signal-to-background ratio?\n\n"
+    "Exercise 4 - Statistical fit (Discovery)\n"
+    "  Goal  : Perform a hypothesis test to claim discovery.\n"
+    "  Setup : Set Fit Signal in the Histogram node (e.g. Zee or Zmumu),\n"
+    "          then Run. Check significance and signal strength (mu).\n"
+    "  Learn : Is significance >= 5 sigma? Is mu consistent with 1?\n\n"
+    "Exercise 5 - Higher energy (Higgs search)\n"
+    "  Goal  : Search for Higgs-associated production at 240 or 365 GeV.\n"
+    "  Setup : Change Data node energy to 240 GeV; use Vec Sum mass\n"
+    "          of the two leptons or the recoil system.\n"
+    "  Learn : At what mass do you find a new excess?\n\n"
+    "Tip: Save your pipeline (File > Save Pipeline) to resume later."
+)
+
+_EXERCISES_W = 580
+_EXERCISES_H = 480
+
+
+def _show_exercises_window(sender=None, app_data=None, user_data=None):
+    if not dpg.does_item_exist("exercises_window"):
+        with dpg.window(
+            tag="exercises_window",
+            label="Suggested Exercises",
+            modal=False, show=False,
+            width=_EXERCISES_W, height=_EXERCISES_H,
+            no_resize=False, no_collapse=True,
+        ):
+            with dpg.child_window(width=-1, height=-40, border=False):
+                dpg.add_spacer(height=6)
+                dpg.add_text(_EXERCISES_TEXT, wrap=_EXERCISES_W - 24)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+            dpg.add_button(
+                label="Close", width=90,
+                callback=lambda: dpg.configure_item("exercises_window", show=False),
+            )
+    vp_w = dpg.get_viewport_width()
+    vp_h = dpg.get_viewport_height()
+    dpg.set_item_pos("exercises_window",
+                     [(vp_w - _EXERCISES_W) // 2, (vp_h - _EXERCISES_H) // 2])
+    dpg.configure_item("exercises_window", show=True)
+    dpg.focus_item("exercises_window")
 
 
 def _show_about_window(sender=None, app_data=None, user_data=None):
@@ -433,6 +502,10 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
             dpg.add_menu_item(
                 label="Tutorial...",
                 callback=show_tutorial,
+            )
+            dpg.add_menu_item(
+                label="Exercises...",
+                callback=lambda: _show_exercises_window(),
             )
 
     # ── Layout: node editor (left) + control panel with console (right) ───
@@ -679,10 +752,20 @@ if _large_font is not None:
 # ── Create initial nodes ──────────────────────────────────────────────────────
 _X_STEP = 310  # horizontal gap between nodes
 create_node("DataSource",   pos=[30,              100], name="IDEA 91 GeV data")
-create_node("Multiplicity", pos=[30 + _X_STEP,    100], name="all events")
-create_node("Selection",    pos=[30 + _X_STEP * 2, 100], name="2 leptons")
-create_node("ObsObject",    pos=[30 + _X_STEP * 3, 100], name="MET pT")
-create_node("Histogram",    pos=[30 + _X_STEP * 4, 100], name="MET pT")
+create_node("Multiplicity", pos=[30 + _X_STEP,    100], name="2 leptons")
+create_node("Selection",    pos=[30 + _X_STEP * 2, 100], name="di-lepton")
+create_node("ObsVectorSum", pos=[30 + _X_STEP * 3, 100], name="Di-lepton mass")
+create_node("Histogram",    pos=[30 + _X_STEP * 4, 100], name="Di-lepton mass")
+
+# ── Set physics-meaningful defaults for Z-boson template ─────────────────────
+# Multiplicity: require exactly 2 or more leptons
+dpg.set_value("txt_leptons_1", 2)
+# Selection: require at least 2 leptons with pT thresholds
+dpg.set_value("txt_sel_2", "l1.pt > 20 and l2.pt > 10")
+# Histogram: 50 bins over 60-120 GeV to capture the Z boson peak
+dpg.set_value("txt_bins_4", 50)
+dpg.set_value("txt_range_min_4", 60.0)
+dpg.set_value("txt_range_max_4", 120.0)
 
 # ── Connect initial nodes in pipeline order ───────────────────────────────────
 for _out_nid, _in_nid in [(0, 1), (1, 2), (2, 3), (3, 4)]:
