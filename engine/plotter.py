@@ -88,7 +88,7 @@ def _render_single(cfg, samples, en, hist_idx, hcfg, detector):
                                     message=".*sumw are zero.*")
             # w2=d_vals gives Poisson (sqrt-N) error bars per bin
             hep.histplot(
-                d_vals, d_edges, w2=d_vals, label="Data Simulation",
+                d_vals, d_edges, w2=d_vals, label="Pseudo-data",
                 histtype="errorbar", color="black", marker="o", markersize=4, ax=ax,
             )
 

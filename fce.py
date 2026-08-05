@@ -388,6 +388,12 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 callback=_show_about_window,
             )
 
+        with dpg.menu(label="Help"):
+            dpg.add_menu_item(
+                label="Tutorial...",
+                callback=show_tutorial,
+            )
+
     # ── Layout: node editor (left) + control panel with console (right) ───
     with dpg.group(horizontal=True):
 
