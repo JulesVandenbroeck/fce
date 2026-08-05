@@ -487,7 +487,20 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 height=42,
             )
             dpg.add_spacer(height=5)
-            dpg.add_spacer(height=6)
+            # ── Node-state colour legend ───────────────────────────────────
+            with dpg.group(horizontal=True):
+                dpg.add_text("Node states:", color=(155, 155, 155))
+                dpg.add_spacer(width=6)
+                dpg.add_text("[Done]",    color=(48, 195, 70))
+                dpg.add_spacer(width=4)
+                dpg.add_text("[Cached]",  color=(30, 190, 210))
+                dpg.add_spacer(width=4)
+                dpg.add_text("[Active]",  color=(215, 145, 25))
+                dpg.add_spacer(width=4)
+                dpg.add_text("[Stopped]", color=(200, 110, 20))
+                dpg.add_spacer(width=4)
+                dpg.add_text("[Error]",   color=(210, 50, 50))
+            dpg.add_spacer(height=4)
             with dpg.group(tag="plot_display_group"):
                 dpg.add_image(
                     "plot_texture_buffer_0",
@@ -590,6 +603,24 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     dpg.add_button(label="Delete Unconnected", width=170, height=44,
                                    tag="btn_delete_unconnected",
                                    callback=lambda: delete_unconnected_nodes())
+
+# ── Run button themes: default (dark) and running (amber) ────────────────────
+with dpg.theme(tag="run_btn_running_theme"):
+    with dpg.theme_component(dpg.mvButton):
+        dpg.add_theme_color(dpg.mvThemeCol_Button,        (140, 80, 0),
+                            category=dpg.mvThemeCat_Core)
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (170, 100, 10),
+                            category=dpg.mvThemeCat_Core)
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (110, 60, 0),
+                            category=dpg.mvThemeCat_Core)
+with dpg.theme(tag="run_btn_default_theme"):
+    with dpg.theme_component(dpg.mvButton):
+        dpg.add_theme_color(dpg.mvThemeCol_Button,        (37, 37, 38),
+                            category=dpg.mvThemeCat_Core)
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (55, 55, 56),
+                            category=dpg.mvThemeCat_Core)
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (26, 26, 27),
+                            category=dpg.mvThemeCat_Core)
 
 # ── Delete Unconnected button dark-red theme ──────────────────────────────────
 with dpg.theme(tag="delete_unconnected_theme"):
