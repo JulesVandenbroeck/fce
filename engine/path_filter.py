@@ -1,7 +1,18 @@
 import math
+import re
 import numpy as np
 import vector
 from ui.state import get_run_state
+
+
+def preprocess_hep_expr(expr: str) -> str:
+    """Translate HEP-style boolean operators to Python syntax."""
+    expr = re.sub(r'&&', ' and ', expr)
+    expr = re.sub(r'\|\|', ' or ', expr)
+    # Replace ! only when not followed by = (to preserve !=)
+    expr = re.sub(r'!(?!=)', 'not ', expr)
+    return expr
+
 
 _SAFE_BUILTINS = {
     "abs": abs, "max": max, "min": min, "len": len,
@@ -473,7 +484,7 @@ def filter_raw_event_data(arrays, nev, cfg, outHist, observable_target,
                     })
             leptons.sort(key=lambda x: x["pt"], reverse=True)
 
-            # ── Build jet list ───────────────────────────────────────────
+            # ── Build jet list (pt-sorted) ──────────────────────────────
             jets = []
             if has_jt:
                 for ij in range(njets):
@@ -481,6 +492,7 @@ def filter_raw_event_data(arrays, nev, cfg, outHist, observable_target,
                     jets.append({"pt": float(jet_pt[i][ij]), "eta": float(jet_eta[i][ij]),
                                  "phi": float(jet_phi[i][ij]), "e":  float(jet_e[i][ij]),
                                  "btag": btag})
+            jets.sort(key=lambda x: x["pt"], reverse=True)
 
             # ── Build photon list (pt-sorted) ─────────────────────────────
             photons = []

@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from ui.state import (get_run_state, update_run_state,
                       add_active_node, add_completed_node, mark_nodes_completed)
 from engine.path_filter import (filter_raw_event_data, fill_histogram_from_cache,
-                                  make_cache_acc, save_cache)
+                                  make_cache_acc, save_cache, preprocess_hep_expr)
 from engine.path_final import write_final_histograms
 
 from paths import get_fce_home
@@ -280,7 +280,7 @@ def run_physics_loop(cfg, samples, active_samples, en):
         # OPT-2: compile selection expressions once per selection branch,
         # shared across all sample workers (code objects are read-only).
         compiled_sel_exprs = [
-            compile(e, '<sel>', 'eval')
+            compile(preprocess_hep_expr(e), '<sel>', 'eval')
             for e in sel_cfg.get("sel_exprs", []) if e and e.strip()
         ]
 
