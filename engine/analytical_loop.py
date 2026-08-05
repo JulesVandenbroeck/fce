@@ -195,7 +195,9 @@ def _process_sample(sel_cfg, s, idx, active_samples, cfg,
 
         outHist = hist()
         outHist.create(int(hcfg["bins"]), float(hcfg["min"]), float(hcfg["max"]))
-        fill_histogram_from_cache(sel_cache, outHist, hcfg["observable"])
+        fill_warnings = fill_histogram_from_cache(sel_cache, outHist, hcfg["observable"])
+        for _w in (fill_warnings or []):
+            update_run_state("status_msg", _w)
         write_final_histograms(hdir, s, hcfg["h5"], outHist, out_path)
 
     return True

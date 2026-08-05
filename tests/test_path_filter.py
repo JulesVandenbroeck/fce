@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine.path_filter import (
     _delta_r, _P4Proxy, _ArrayProxy, _delta_r_vec,
-    make_cache_acc, save_cache, _CACHE_KEYS,
+    make_cache_acc, save_cache, _CACHE_KEYS, _check_object_availability,
 )
 
 
@@ -102,6 +102,41 @@ def test_make_cache_acc_has_all_keys():
         assert key in acc
         assert hasattr(acc[key], "__len__")  # pre-allocated numpy array
     assert acc["_n"] == 0
+
+
+def test_check_object_availability_no_warning():
+    data = {
+        "weight": np.array([1.0, 1.0]),
+        "nlep":   np.array([2, 3]),
+        "njets":  np.array([2, 2]),
+        "nphot":  np.array([0, 0]),
+    }
+    warnings = _check_object_availability(data, 2, "l2.pt > 10")
+    assert warnings == []
+
+
+def test_check_object_availability_warns_l2():
+    data = {
+        "weight": np.array([1.0, 1.0, 1.0]),
+        "nlep":   np.array([1, 2, 1]),
+        "njets":  np.array([0, 0, 0]),
+        "nphot":  np.array([0, 0, 0]),
+    }
+    warnings = _check_object_availability(data, 3, "l2.pt > 10")
+    assert len(warnings) == 1
+    assert "l2" in warnings[0]
+    assert "2" in warnings[0]
+
+
+def test_check_object_availability_no_l2_reference():
+    data = {
+        "weight": np.array([1.0]),
+        "nlep":   np.array([1]),
+        "njets":  np.array([0]),
+        "nphot":  np.array([0]),
+    }
+    warnings = _check_object_availability(data, 1, "l1.pt > 10")
+    assert warnings == []
 
 
 def test_save_cache_and_reload(tmp_path):

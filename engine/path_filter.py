@@ -313,13 +313,49 @@ def _obj_from_cache(data, i, prefix, keys, extra=None) -> _P:
     return _P(**kw)
 
 
-def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str):
-    """Load a selection-level cache and fill the histogram with a fresh observable eval."""
+# Map of object prefix → (count array key, human label) for availability checks.
+_OBJ_COUNT_KEY = {
+    "l2":  ("nlep",  "l2", "nlep >= 2"),
+    "j2":  ("njets", "j2", "njets >= 2"),
+    "ph2": ("nphot", "ph2", "nphot >= 2"),
+}
+
+
+def _check_object_availability(data, n: int, expr: str) -> list[str]:
+    """Return warning strings for objects referenced in *expr* that are absent
+    for some events in the cache (count < required minimum).
+    """
+    warnings = []
+    for prefix, (cnt_key, obj_name, req) in _OBJ_COUNT_KEY.items():
+        pattern = r'\b' + re.escape(prefix) + r'\.'
+        if not re.search(pattern, expr):
+            continue
+        if cnt_key not in data:
+            continue
+        missing = int(np.sum(data[cnt_key] < 2))
+        if missing > 0:
+            pct = 100.0 * missing / n if n > 0 else 0.0
+            warnings.append(
+                f"Warning: '{obj_name}' used in observable but {missing} "
+                f"event(s) ({pct:.1f}%) have {req} not satisfied — "
+                f"those events return -999 and are excluded from the histogram."
+            )
+    return warnings
+
+
+def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str) -> list[str]:
+    """Load a selection-level cache and fill the histogram with a fresh observable eval.
+
+    Returns a (possibly empty) list of warning strings about objects that are
+    unavailable for some events (e.g. l2 accessed when nlep < 2).
+    """
     # OPT-1: mmap_mode='r' lets the OS page in only accessed columns; unaccessed arrays
     # are never faulted into RAM (particularly useful in the vectorized path below).
     data = np.load(cache_file, mmap_mode='r')
     n = len(data["weight"])
     weights = data["weight"].astype(np.float64)
+
+    avail_warnings = _check_object_availability(data, n, observable_target)
 
     # ── Vectorized fast path: evaluate observable over all events at once ──
     try:
@@ -338,7 +374,7 @@ def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str):
         if vals.shape[0] == n:
             mask = np.isfinite(vals) & (vals > -900.0)
             outHist.h["h"].fill(vals[mask], weight=weights[mask])
-            return
+            return avail_warnings
     except Exception:
         pass
 
@@ -384,6 +420,7 @@ def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str):
             outHist.h["h"].fill(obs_val, weight=float(data["weight"][i]))
         except Exception:
             continue
+    return avail_warnings
 
 
 # ---------------------------------------------------------------------------
