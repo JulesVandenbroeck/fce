@@ -532,17 +532,19 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     width=636,
                     height=454,
                 )
-            with dpg.child_window(
-                tag="console_scroll_container",
-                width=-1,
-                height=-1,    # fills all remaining height
-                border=False,
-            ):
-                dpg.add_text(
-                    tag="ui_console_log",
-                    default_value="Initialized.\n",
-                    wrap=0,
-                )
+            with dpg.collapsing_header(label="Console", default_open=True,
+                                        tag="console_header"):
+                with dpg.child_window(
+                    tag="console_scroll_container",
+                    width=-1,
+                    height=150,
+                    border=False,
+                ):
+                    dpg.add_text(
+                        tag="ui_console_log",
+                        default_value="Initialized.\n",
+                        wrap=0,
+                    )
 
     # ── Node palette (bottom bar) — must be inside the primary window ─────
     # Height 80 px, no_scrollbar prevents any overflow scroll.

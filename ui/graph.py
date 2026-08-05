@@ -136,6 +136,26 @@ def _nid_from_slot(slot_id) -> int | None:
 
 _CHAINABLE_TYPES = {"Multiplicity", "Selection"}
 
+# Theme for Selection→Selection AND-chain links (created on first use).
+_AND_LINK_THEME: list[int | None] = [None]
+
+
+def _get_and_link_theme() -> int:
+    """Return (creating if necessary) a blue theme for AND-chained Selection links."""
+    if _AND_LINK_THEME[0] is None:
+        tid = dpg.generate_uuid()
+        with dpg.theme(tag=tid):
+            with dpg.theme_component(dpg.mvNodeLink):
+                dpg.add_theme_color(dpg.mvNodeCol_Link,
+                                    (80, 140, 240, 255), category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_LinkHovered,
+                                    (110, 170, 255, 255), category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_LinkSelected,
+                                    (150, 200, 255, 255), category=dpg.mvThemeCat_Nodes)
+        _AND_LINK_THEME[0] = tid
+    return _AND_LINK_THEME[0]
+
+
 # Explicit allowlist of valid src → dst connections.
 # Observable subtypes are grouped together on the destination side.
 _OBS_TYPES_SET = {"Observable", "ObsGlobal", "ObsObject", "ObsVectorSum", "ObsCustom"}
@@ -209,6 +229,14 @@ def link_callback(sender, app_data):
     link_id = dpg.add_node_link(start_slot, end_slot, parent=sender)
     REGISTRY.links[link_id] = (start_slot, end_slot)
     REGISTRY.connections[start_slot] = end_slot
+    # Colour Selection→Selection (AND-chain) links in blue for visual distinction.
+    if (start_nid is not None and end_nid is not None
+            and REGISTRY.nodes.get(start_nid) == "Selection"
+            and REGISTRY.nodes.get(end_nid) == "Selection"):
+        try:
+            dpg.bind_item_theme(link_id, _get_and_link_theme())
+        except Exception:
+            pass
 
 
 def delink_callback(sender, app_data):
@@ -398,6 +426,9 @@ def _restore_link(snap: dict):
         lid = dpg.add_node_link(start_slot, end_slot, parent="node_editor_container")
         REGISTRY.links[lid] = (start_slot, end_slot)
         REGISTRY.connections[start_slot] = end_slot
+        if (REGISTRY.nodes.get(src_nid) == "Selection"
+                and REGISTRY.nodes.get(dst_nid) == "Selection"):
+            dpg.bind_item_theme(lid, _get_and_link_theme())
     except Exception:
         pass
 
