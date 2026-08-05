@@ -90,11 +90,16 @@ _PAGES = [
     ),
     (
         "Node Palette",
-        "The palette at the bottom lets you drag new nodes onto the canvas.\n\n"
-        "Multiplicity, Selection, and Histogram are dragged directly.\n\n"
-        "Observable opens a submenu: click the Observable button to reveal\n"
-        "four sub-types (Global, Object, Vec Sum, Custom). Drag the desired\n"
-        "type onto the canvas, then click '< Back' to return to the palette.\n\n"
+        "The palette at the bottom lets you add nodes to the canvas.\n\n"
+        "  Click  -- creates a new node below the lowest existing node\n"
+        "            of the same type.\n"
+        "  Drag   -- drag a button onto the canvas to place the node\n"
+        "            at the exact drop position.\n\n"
+        "Observable opens a submenu with four sub-types: Global, Object,\n"
+        "Vec Sum, Custom. The '?' button next to 'Click or drag' shows\n"
+        "this help at any time.\n\n"
+        "The Delete Unconnected button (right side) removes all nodes\n"
+        "with no connections (the Data node is always kept).\n\n"
         "Nodes can also be added via Add Node in the top menu bar.",
         "node_palette_bar", "window",
     ),
