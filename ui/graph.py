@@ -607,7 +607,7 @@ def _set_node_active(nid: int):
 
 
 def _set_node_aborted(nid: int):
-    """Apply a red theme to indicate the node was processing when the run was stopped."""
+    """Apply a dark-orange theme to indicate the node was interrupted when the run stopped."""
     node_tag = f"node_{nid}"
     if not dpg.does_item_exist(node_tag):
         return
@@ -616,13 +616,13 @@ def _set_node_aborted(nid: int):
     with dpg.theme(tag=theme_id):
         with dpg.theme_component(dpg.mvNode):
             dpg.add_theme_color(dpg.mvNodeCol_NodeBackground,
-                                (75, 15, 15), category=dpg.mvThemeCat_Nodes)
+                                (70, 40, 5), category=dpg.mvThemeCat_Nodes)
             dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered,
-                                (95, 20, 20), category=dpg.mvThemeCat_Nodes)
+                                (90, 55, 8), category=dpg.mvThemeCat_Nodes)
             dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected,
-                                (95, 20, 20), category=dpg.mvThemeCat_Nodes)
+                                (90, 55, 8), category=dpg.mvThemeCat_Nodes)
             dpg.add_theme_color(dpg.mvNodeCol_NodeOutline,
-                                (210, 50, 50), category=dpg.mvThemeCat_Nodes)
+                                (200, 110, 20), category=dpg.mvThemeCat_Nodes)
     dpg.bind_item_theme(node_tag, theme_id)
     _NODE_RUNTIME_THEME_IDS[nid] = theme_id
     _NODE_RUNTIME_STATES[nid] = "aborted"
@@ -648,6 +648,28 @@ def _set_node_done(nid: int):
     dpg.bind_item_theme(node_tag, theme_id)
     _NODE_RUNTIME_THEME_IDS[nid] = theme_id
     _NODE_RUNTIME_STATES[nid] = "done"
+
+
+def _set_node_cached(nid: int):
+    """Apply a teal/cyan theme to indicate the node result was loaded from cache."""
+    node_tag = f"node_{nid}"
+    if not dpg.does_item_exist(node_tag):
+        return
+    _delete_runtime_theme(nid)
+    theme_id = dpg.generate_uuid()
+    with dpg.theme(tag=theme_id):
+        with dpg.theme_component(dpg.mvNode):
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackground,
+                                (8, 58, 65), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered,
+                                (12, 74, 84), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected,
+                                (12, 74, 84), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeOutline,
+                                (30, 190, 210), category=dpg.mvThemeCat_Nodes)
+    dpg.bind_item_theme(node_tag, theme_id)
+    _NODE_RUNTIME_THEME_IDS[nid] = theme_id
+    _NODE_RUNTIME_STATES[nid] = "cached"
 
 
 def _clear_node_runtime_theme(nid: int):
