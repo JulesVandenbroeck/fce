@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from engine.path_filter import (
     _delta_r, _P4Proxy, _ArrayProxy, _delta_r_vec,
     make_cache_acc, save_cache, _CACHE_KEYS, _check_object_availability,
+    check_mult_bounds_for_exprs,
 )
 
 
@@ -137,6 +138,57 @@ def test_check_object_availability_no_l2_reference():
     }
     warnings = _check_object_availability(data, 1, "l1.pt > 10")
     assert warnings == []
+
+
+def test_mult_bounds_no_second_objects():
+    """No second-object references → no warnings regardless of counts."""
+    assert check_mult_bounds_for_exprs(["l1.pt > 10", "nlep >= 1"], 0, 0, 0) == []
+
+
+def test_mult_bounds_l2_sufficient():
+    """l2 reference with eff_lep >= 2 → no warning."""
+    assert check_mult_bounds_for_exprs(["l2.pt > 5"], 2, 0, 0) == []
+
+
+def test_mult_bounds_l2_insufficient():
+    """l2 reference with eff_lep < 2 → warning."""
+    warns = check_mult_bounds_for_exprs(["l2.pt > 5"], 1, 0, 0)
+    assert len(warns) == 1
+    assert "l2.*" in warns[0]
+    assert "nlep >= 2" in warns[0]
+
+
+def test_mult_bounds_j2_insufficient():
+    """j2 reference with eff_jet < 2 → warning."""
+    warns = check_mult_bounds_for_exprs(["j2.btag > 0.7"], 0, 1, 0)
+    assert len(warns) == 1
+    assert "j2.*" in warns[0]
+
+
+def test_mult_bounds_ph2_insufficient():
+    """ph2 reference with eff_phot == 0 → warning."""
+    warns = check_mult_bounds_for_exprs(["ph2.pt"], 0, 0, 0)
+    assert len(warns) == 1
+    assert "ph2.*" in warns[0]
+
+
+def test_mult_bounds_vecsum_expr():
+    """Vec Sum expression containing l2.p4 triggers warning when eff_lep < 2."""
+    warns = check_mult_bounds_for_exprs(["(l1.p4 + l2.p4).mass"], 1, 0, 0)
+    assert len(warns) == 1
+    assert "l2.*" in warns[0]
+
+
+def test_mult_bounds_multiple_warnings():
+    """Multiple insufficient objects each produce their own warning."""
+    warns = check_mult_bounds_for_exprs(["l2.pt + j2.pt"], 0, 0, 0)
+    assert len(warns) == 2
+
+
+def test_mult_bounds_leq_operator_warns():
+    """<= operator gives no lower-bound guarantee (eff == 0) → warning."""
+    warns = check_mult_bounds_for_exprs(["l2.pt > 5"], 0, 0, 0)
+    assert len(warns) == 1
 
 
 def test_save_cache_and_reload(tmp_path):

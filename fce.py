@@ -22,7 +22,8 @@ from ui.graph import (link_callback, delink_callback, create_node,
                       setup_link_handlers, on_node_editor_drop,
                       save_pipeline, load_pipeline,
                       create_node_below_lowest, delete_unconnected_nodes,
-                      show_delete_unconnected_confirm)
+                      show_delete_unconnected_confirm,
+                      check_multiplicity_bounds)
 from ui.state import REGISTRY
 from ui.components import (trigger_analysis_pipeline, trigger_dataset_download,
                            confirm_redownload, MAX_HIST_TEXTURES,
@@ -145,6 +146,28 @@ with dpg.window(tag="help_expr_window", label="Expression Guide",
         callback=lambda: dpg.configure_item("help_expr_window", show=False),
         width=100,
     )
+
+# ── Multiplicity bounds warning popup ────────────────────────────────────────
+with dpg.window(tag="mult_bounds_warn_window", label="Object Availability Warning",
+                modal=True, show=False, width=480, height=220, no_resize=True):
+    dpg.add_text("", tag="mult_bounds_warn_text", wrap=460)
+    dpg.add_spacer(height=10)
+    with dpg.group(horizontal=True):
+        dpg.add_button(
+            label="Run anyway",
+            tag="mult_bounds_run_btn",
+            callback=lambda: (
+                dpg.configure_item("mult_bounds_warn_window", show=False),
+                trigger_analysis_pipeline(_skip_bounds_check=True),
+            ),
+            width=140,
+        )
+        dpg.add_spacer(width=10)
+        dpg.add_button(
+            label="Cancel",
+            width=80,
+            callback=lambda: dpg.configure_item("mult_bounds_warn_window", show=False),
+        )
 
 # ── Re-download confirmation window ───────────────────────────────────────────
 with dpg.window(tag="redownload_confirm_window", label="Confirm Re-download",

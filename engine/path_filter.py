@@ -359,6 +359,42 @@ def _check_object_availability(data, n: int, expr: str) -> list[str]:
     return warnings
 
 
+def check_mult_bounds_for_exprs(
+    exprs: list[str],
+    eff_lep: int,
+    eff_jet: int,
+    eff_phot: int,
+) -> list[str]:
+    """Return warning strings when Multiplicity effective minimums are lower than
+    what the given expressions access.
+
+    Parameters
+    ----------
+    exprs     : All Selection / Observable expression strings.
+    eff_lep   : Minimum number of leptons guaranteed by the Multiplicity node(s).
+    eff_jet   : Minimum number of jets guaranteed by the Multiplicity node(s).
+    eff_phot  : Minimum number of photons guaranteed by the Multiplicity node(s).
+    """
+    combined = " ".join(exprs)
+    warnings: list[str] = []
+    checks = [
+        (r'\bl2\.', eff_lep,  2, "l2.*", "leptons",  "nlep >= 2"),
+        (r'\bj2\.', eff_jet,  2, "j2.*", "jets",     "njets >= 2"),
+        (r'\bph2\.', eff_phot, 2, "ph2.*", "photons", "nphot >= 2"),
+    ]
+    for pattern, eff, req, label, obj_plural, req_expr in checks:
+        if not re.search(pattern, combined):
+            continue
+        if eff < req:
+            warnings.append(
+                f"{label} used in expression but Multiplicity only guarantees "
+                f"{eff} {obj_plural} — events with fewer than {req} {obj_plural} "
+                f"return -999 and are excluded from the histogram. "
+                f"Set Multiplicity {req_expr} to suppress this warning."
+            )
+    return warnings
+
+
 def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str) -> list[str]:
     """Load a selection-level cache and fill the histogram with a fresh observable eval.
 

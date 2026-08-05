@@ -411,7 +411,7 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
     dpg.set_frame_callback(dpg.get_frame_count() + 6, _frame_poll_callback)
 
 
-def trigger_analysis_pipeline():
+def trigger_analysis_pipeline(_skip_bounds_check: bool = False):
     global CURRENT_WORKER
     from run_engine import execute_analysis
     from ui.state import REGISTRY
@@ -455,6 +455,21 @@ def trigger_analysis_pipeline():
             _set_node_error(nid, True, msg)
             log_to_message_center(f"Error: {msg}")
         return
+
+    # Check that Multiplicity minimum counts cover the objects used in expressions
+    if not _skip_bounds_check:
+        from ui.graph import check_multiplicity_bounds
+        bounds_warnings = check_multiplicity_bounds()
+        if bounds_warnings and dpg.does_item_exist("mult_bounds_warn_window"):
+            warn_text = "\n\n".join(bounds_warnings)
+            dpg.set_value("mult_bounds_warn_text", warn_text)
+            vp_w = dpg.get_viewport_width()
+            vp_h = dpg.get_viewport_height()
+            dpg.set_item_pos("mult_bounds_warn_window",
+                             [(vp_w - 480) // 2, (vp_h - 220) // 2])
+            dpg.configure_item("mult_bounds_warn_window", show=True)
+            dpg.focus_item("mult_bounds_warn_window")
+            return
 
     if CURRENT_WORKER and CURRENT_WORKER.is_alive():
         safe_set_state("stop", True)

@@ -772,6 +772,54 @@ def validate_node_expressions() -> list[tuple[int, str]]:
     return errors
 
 
+def check_multiplicity_bounds() -> list[str]:
+    """Return warning strings when Multiplicity minimum counts are lower than
+    what Selection or Observable expressions actually access.
+
+    Delegates pure logic to engine.path_filter.check_mult_bounds_for_exprs so
+    that logic can be unit-tested without a live DPG context.
+    """
+    from engine.path_filter import check_mult_bounds_for_exprs
+
+    nodes = REGISTRY.nodes
+
+    # ── Collect all expressions from Selection and Observable nodes ──────────
+    exprs: list[str] = []
+    for nid, ntype in nodes.items():
+        if ntype == "Selection":
+            tag = f"txt_sel_{nid}"
+        elif ntype in ("Observable", "ObsCustom"):
+            tag = f"txt_obs_{nid}"
+        elif _is_obs(ntype):
+            tag = f"obs_expr_{nid}"
+        else:
+            continue
+        if dpg.does_item_exist(tag):
+            v = dpg.get_value(tag).strip()
+            if v:
+                exprs.append(v)
+
+    # ── Read effective minimum from all Multiplicity nodes ───────────────────
+    def _eff_min(count: int, op: str) -> int:
+        return count if op in (">=", "==") else 0
+
+    eff_lep = eff_jet = eff_phot = 0
+    for n in [nid for nid, t in nodes.items() if t == "Multiplicity"]:
+        nlep  = int(dpg.get_value(f"txt_leptons_{n}"))  if dpg.does_item_exist(f"txt_leptons_{n}")  else 0
+        njets = int(dpg.get_value(f"txt_jets_{n}"))     if dpg.does_item_exist(f"txt_jets_{n}")     else 0
+        nphot = int(dpg.get_value(f"txt_photons_{n}"))  if dpg.does_item_exist(f"txt_photons_{n}")  else 0
+        op_lep  = dpg.get_value(f"cb_op_lep_{n}")  if dpg.does_item_exist(f"cb_op_lep_{n}")  else ">="
+        op_jet  = dpg.get_value(f"cb_op_jet_{n}")  if dpg.does_item_exist(f"cb_op_jet_{n}")  else ">="
+        op_phot = dpg.get_value(f"cb_op_phot_{n}") if dpg.does_item_exist(f"cb_op_phot_{n}") else ">="
+        ltype   = dpg.get_value(f"cb_ltype_{n}")   if dpg.does_item_exist(f"cb_ltype_{n}")   else "Any"
+        if ltype == "Any":
+            eff_lep = max(eff_lep, _eff_min(nlep, op_lep))
+        eff_jet  = max(eff_jet,  _eff_min(njets, op_jet))
+        eff_phot = max(eff_phot, _eff_min(nphot, op_phot))
+
+    return check_mult_bounds_for_exprs(exprs, eff_lep, eff_jet, eff_phot)
+
+
 def mark_nodes_from_pipeline_check(error_nids: list[int], all_nids: list[int]):
     connected_starts = {s for s, _ in REGISTRY.links.values()}
     connected_ends   = {e for _, e in REGISTRY.links.values()}
