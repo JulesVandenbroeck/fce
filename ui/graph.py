@@ -136,6 +136,28 @@ def _nid_from_slot(slot_id) -> int | None:
 
 _CHAINABLE_TYPES = {"Multiplicity", "Selection"}
 
+# Pin tooltip text shown when hovering over input/output slots.
+_PIN_IN_TIPS: dict[str, str] = {
+    "Multiplicity": "Input: connect from Data or Multiplicity",
+    "Selection":    "Input: connect from Multiplicity or Selection",
+    "ObsGlobal":    "Input: connect from Selection",
+    "ObsObject":    "Input: connect from Selection",
+    "ObsVectorSum": "Input: connect from Selection",
+    "ObsCustom":    "Input: connect from Selection",
+    "Observable":   "Input: connect from Selection",
+    "Histogram":    "Input: connect from Observable",
+}
+_PIN_OUT_TIPS: dict[str, str] = {
+    "DataSource":   "Output: connect to Multiplicity or Selection",
+    "Multiplicity": "Output: connect to Multiplicity or Selection",
+    "Selection":    "Output: connect to Observable or Selection (AND-chain)",
+    "ObsGlobal":    "Output: connect to Histogram",
+    "ObsObject":    "Output: connect to Histogram",
+    "ObsVectorSum": "Output: connect to Histogram",
+    "ObsCustom":    "Output: connect to Histogram",
+    "Observable":   "Output: connect to Histogram",
+}
+
 # Explicit allowlist of valid src → dst connections.
 # Observable subtypes are grouped together on the destination side.
 _OBS_TYPES_SET = {"Observable", "ObsGlobal", "ObsObject", "ObsVectorSum", "ObsCustom"}
@@ -1458,6 +1480,10 @@ def create_node(node_type: str, pos: list | None = None, name: str | None = None
             tag=in_tag, parent=node_tag,
         )
         dpg.add_spacer(width=4, parent=in_tag)
+        _in_tip = _PIN_IN_TIPS.get(node_type)
+        if _in_tip:
+            with dpg.tooltip(parent=in_tag):
+                dpg.add_text(_in_tip)
         _register_slot(in_tag, nid)
 
     # ── Output slot (or static for Histogram) ────────────────────────────
@@ -1468,6 +1494,10 @@ def create_node(node_type: str, pos: list | None = None, name: str | None = None
             tag=out_tag, parent=node_tag,
         )
         _add_node_widgets(node_type, nid, out_tag)
+        _out_tip = _PIN_OUT_TIPS.get(node_type)
+        if _out_tip:
+            with dpg.tooltip(parent=out_tag):
+                dpg.add_text(_out_tip)
         _register_slot(out_tag, nid)
     else:
         in_tag = f"slot_in_{nid}"

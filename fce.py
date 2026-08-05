@@ -108,29 +108,62 @@ _ui_state.EXTENDED_FONT = _extended_font
 _ui_state.LARGE_FONT = _large_font
 
 # ── Help popup (expression guide) ─────────────────────────────────────────────
+_HELP_EXPR_W = 560
+_HELP_EXPR_H = 580
 with dpg.window(tag="help_expr_window", label="Expression Guide",
-                modal=True, show=False, width=520, height=420,
+                modal=True, show=False, width=_HELP_EXPR_W, height=_HELP_EXPR_H,
                 no_resize=False):
-    dpg.add_text(
-        "Variables  (pt-sorted within type)\n\n"
-        "  Counts :  nlep  nel  nmu  njets  nphot\n\n"
-        "  Leptons:  l1.pt  l1.eta  l1.phi  l1.e  l1.d0  l1.z0  l1.p4\n"
-        "            l2.pt  l2.eta  l2.phi  l2.e  l2.d0  l2.z0  l2.p4\n\n"
-        "  Jets   :  j1.pt  j1.eta  j1.phi  j1.e  j1.btag  j1.p4\n"
-        "            j2.pt  j2.eta  j2.phi  j2.e  j2.btag  j2.p4\n\n"
-        "  Photons:  ph1.pt  ph1.eta  ph1.phi  ph1.e  ph1.p4\n"
-        "            ph2.pt  ph2.eta  ph2.phi  ph2.e  ph2.p4\n\n"
-        "  MET    :  met.pt  met.eta  met.phi  met.e  met.p4\n\n"
-        "4-vector arithmetic (p4 objects)\n\n"
-        "  (l1.p4 + l2.p4).mass   →  invariant mass\n"
-        "  (l1.p4 + l2.p4).pt     →  system pT\n"
-        "  l1.p4.deltaR(l2.p4)    →  ΔR\n"
-        "  deltaR(l1, l2)          →  ΔR via eta/phi\n"
-        "  l1.pt + l2.pt           →  sum pT\n\n"
-        "Operators :  > < >= <= == !=\n"
-        "Logic     :  and  or  not  ( )"
-    )
-    dpg.add_spacer(height=8)
+    with dpg.child_window(width=-1, height=-40, border=False):
+        dpg.add_text(
+            "VARIABLES  (objects pT-sorted within type)\n\n"
+            "Counts\n"
+            "  nlep   total leptons (electrons + muons)\n"
+            "  nel    number of electrons\n"
+            "  nmu    number of muons\n"
+            "  njets  number of jets\n"
+            "  nphot  number of photons\n\n"
+            "Leptons  l1, l2  [pt / e in GeV, angles in rad]\n"
+            "  .pt    transverse momentum (perpendicular to beam)\n"
+            "  .eta   pseudorapidity: detector coverage |eta|<2.5\n"
+            "  .phi   azimuthal angle in the transverse plane\n"
+            "  .e     total energy\n"
+            "  .d0    transverse impact parameter (vertex proximity)\n"
+            "  .z0    longitudinal impact parameter\n"
+            "  .p4    4-vector for invariant mass / deltaR\n\n"
+            "Jets  j1, j2  [pt / e in GeV]\n"
+            "  .pt .eta .phi .e   kinematic variables (as above)\n"
+            "  .btag  b-tagging score [0,1]; > 0.7 selects b-jets\n\n"
+            "Photons  ph1, ph2  [pt / e in GeV]\n"
+            "  .pt .eta .phi .e   kinematic variables (as above)\n\n"
+            "MET  (missing transverse energy -- proxy for neutrinos)\n"
+            "  met.pt   magnitude of missing pT  [GeV]\n"
+            "  met.phi  direction in the transverse plane\n\n"
+            "4-VECTOR ARITHMETIC  (use .p4 objects)\n\n"
+            "  (l1.p4 + l2.p4).mass   invariant mass of di-lepton system [GeV]\n"
+            "  (l1.p4 + l2.p4).pt     transverse momentum of the system   [GeV]\n"
+            "  (l1.p4 + l2.p4).eta    pseudorapidity of the system\n"
+            "  l1.p4.deltaR(l2.p4)    angular separation sqrt(deta^2+dphi^2)\n"
+            "  deltaR(l1, l2)          same, using object eta/phi directly\n"
+            "  l1.pt + l2.pt           scalar sum of transverse momenta    [GeV]\n\n"
+            "WORKED EXAMPLES\n\n"
+            "  l1.pt > 20 and l2.pt > 10\n"
+            "      Both leptons hard -- reduces fake-lepton backgrounds.\n\n"
+            "  (l1.p4+l2.p4).mass > 80 and (l1.p4+l2.p4).mass < 100\n"
+            "      Di-lepton mass window around the Z boson peak at ~91 GeV.\n\n"
+            "  njets >= 2 and j1.btag > 0.7\n"
+            "      2+ jets with the leading jet b-tagged (top quark searches).\n\n"
+            "  nlep >= 2 and met.pt > 30\n"
+            "      2 leptons + missing energy (W/Z + neutrino topology).\n\n"
+            "OPERATORS   > < >= <= == !=\n"
+            "LOGIC       and  or  not  ( )\n"
+            "            (also accepted: && || ! as in C++)\n\n"
+            "OBJECT LIMITS\n"
+            "  Only l1/l2, j1/j2, ph1/ph2 are available.\n"
+            "  If fewer objects are present, missing ones return -999.",
+            wrap=_HELP_EXPR_W - 24,
+        )
+    dpg.add_separator()
+    dpg.add_spacer(height=4)
     dpg.add_button(
         label="Close",
         callback=lambda: dpg.configure_item("help_expr_window", show=False),
@@ -413,7 +446,13 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
         # Right: controls + plot + console
         with dpg.child_window(width=660, height=-85, border=False):
 
-            dpg.add_spacer(height=18)
+            dpg.add_spacer(height=6)
+            dpg.add_text(
+                "Pipeline:  Data  ->  Multiplicity  ->  Selection  ->  Observable  ->  Histogram",
+                color=(100, 150, 200, 180),
+                tag="pipeline_flow_label",
+            )
+            dpg.add_spacer(height=6)
             dpg.add_progress_bar(
                 label="Progress",
                 tag="ui_progress_bar",
