@@ -6,7 +6,7 @@ import dearpygui.dearpygui as dpg
 from ui.graph import (compile_graph_topology, check_pipeline_connectivity,
                       mark_nodes_from_pipeline_check, validate_node_expressions,
                       clear_all_node_errors, apply_node_runtime_states,
-                      _clear_node_runtime_theme, _set_node_done)
+                      _clear_node_runtime_theme, _set_node_done, _set_node_cached)
 from ui.state import get_run_state, update_run_state
 from paths import get_fce_home
 
@@ -229,6 +229,8 @@ def refresh_ui_canvas(selections_info: list | None = None,
 def _frame_poll_callback(sender=None, app_data=None, user_data=None):
     if not safe_get_state("running"):
         dpg.configure_item("btn_trigger", label="Run", enabled=True)
+        if dpg.does_item_exist("run_btn_default_theme"):
+            dpg.bind_item_theme("btn_trigger", "run_btn_default_theme")
         if dpg.does_item_exist("ui_status_label"):
             dpg.set_value("ui_status_label", "")
 
@@ -444,9 +446,12 @@ def trigger_analysis_pipeline():
                     if ntype in ("DataSource", "Multiplicity")}
     _pre_done = set(_cached_sel_nids) | _always_done
 
-    # Reset runtime themes: clear non-pre-done nodes, keep pre-done ones green
+    # Reset runtime themes: use teal for cached selection nodes, green for
+    # config-only (DataSource, Multiplicity), clear everything else.
     for _nid in list(REGISTRY.nodes.keys()):
-        if _nid in _pre_done:
+        if _nid in _cached_sel_nids:
+            _set_node_cached(_nid)
+        elif _nid in _always_done:
             _set_node_done(_nid)
         else:
             _clear_node_runtime_theme(_nid)
@@ -505,6 +510,8 @@ def trigger_analysis_pipeline():
         )
 
     dpg.configure_item("btn_trigger", label="Stop (Processing..)", enabled=True)
+    if dpg.does_item_exist("run_btn_running_theme"):
+        dpg.bind_item_theme("btn_trigger", "run_btn_running_theme")
 
     CURRENT_WORKER = threading.Thread(target=execute_analysis, args=(cfg, None), daemon=True)
     CURRENT_WORKER.start()
