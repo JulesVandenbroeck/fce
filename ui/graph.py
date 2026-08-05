@@ -1765,6 +1765,7 @@ def compile_graph_topology() -> dict:
         sel_name = REGISTRY.node_names.get(sel_nid, "").strip()
         selections.append({
             "nid": sel_nid,
+            "prefix_nids": prefix,
             "node_name": sel_name if sel_name else f"Selection {len(selections) + 1}",
             "sel_custom_name": sel_name,   # empty string when not explicitly named
             "sel_exprs": sel_exprs,
