@@ -160,8 +160,24 @@ def test_extract_min_count_lhs_lt():
     assert _extract_min_count("1 < nlep", "nlep") == 2
 
 
-def test_extract_min_count_no_constraint():
-    assert _extract_min_count("l1.pt > 10", "nlep") == 0
+def test_extract_min_count_no_explicit_constraint():
+    """No explicit nlep/njets/nphot — returns 0 when no object references either."""
+    assert _extract_min_count("met.pt > 30", "nlep") == 0
+
+
+def test_extract_min_count_implicit_l1():
+    """l1.* reference implies nlep >= 1."""
+    assert _extract_min_count("l1.pt > 10", "nlep") == 1
+
+
+def test_extract_min_count_implicit_l2():
+    """l2.* reference implies nlep >= 2."""
+    assert _extract_min_count("l2.pt > 5", "nlep") == 2
+
+
+def test_extract_min_count_implicit_beats_explicit():
+    """l2 reference gives nlep >= 2 even if explicit says nlep >= 1."""
+    assert _extract_min_count("nlep >= 1 and l2.pt > 5", "nlep") == 2
 
 
 def test_extract_min_count_jets():

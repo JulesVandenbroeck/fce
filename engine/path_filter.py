@@ -362,18 +362,32 @@ def _check_object_availability(data, n: int, expr: str) -> list[str]:
 def _extract_min_count(expr: str, var: str) -> int:
     """Return the minimum count of *var* guaranteed by a selection expression.
 
-    Recognises: var >= N, var > N, var == N, N <= var, N < var.
+    Combines two sources:
+    1. Explicit count constraints: var >= N, var > N, var == N, N <= var, N < var.
+    2. Implicit minimums from object references: l1.* → nlep >= 1, l2.* → nlep >= 2,
+       j1.* → njets >= 1, j2.* → njets >= 2, ph1.* → nphot >= 1, ph2.* → nphot >= 2.
+       Using a second-index object in a selection filters to events where that object
+       exists, so it implicitly guarantees a minimum count.
+
     Returns the maximum of all found lower bounds (0 if none found).
     """
     minimum = 0
-    # var OP N  (right-hand side is the number)
+    # ── Explicit count constraints ──────────────────────────────────────────
     for m in re.finditer(r'\b' + re.escape(var) + r'\s*(>=|>|==)\s*(\d+)', expr):
         op, n = m.group(1), int(m.group(2))
         minimum = max(minimum, n if op in (">=", "==") else n + 1)
-    # N OP var  (left-hand side is the number)
     for m in re.finditer(r'(\d+)\s*(<=|<)\s*' + re.escape(var) + r'\b', expr):
         n, op = int(m.group(1)), m.group(2)
         minimum = max(minimum, n if op == "<=" else n + 1)
+    # ── Implicit minimums from object references ────────────────────────────
+    _implicit: dict[str, list[tuple[str, int]]] = {
+        "nlep":  [("l1", 1), ("l2", 2)],
+        "njets": [("j1", 1), ("j2", 2)],
+        "nphot": [("ph1", 1), ("ph2", 2)],
+    }
+    for obj_prefix, obj_min in _implicit.get(var, []):
+        if re.search(r'\b' + re.escape(obj_prefix) + r'\.', expr):
+            minimum = max(minimum, obj_min)
     return minimum
 
 
