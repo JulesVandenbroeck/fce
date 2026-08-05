@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import threading
+import numpy as np
 import uproot
 import boost_histogram as bh
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -336,4 +337,36 @@ def run_physics_loop(cfg, samples, active_samples, en):
             mark_nodes_completed(nids_to_complete)
 
     update_run_state("progress", 0.80)
+
+    # ── Cut-flow table ────────────────────────────────────────────────────────
+    try:
+        total_raw = sum(header_cache.values())
+        col_w = (30, 12, 12)
+        header = (f"{'Stage':<{col_w[0]}}  {'Events':>{col_w[1]}}  {'Efficiency':>{col_w[2]}}")
+        sep = "-" * (sum(col_w) + 4)
+        rows = [
+            "Cut-flow table",
+            sep, header, sep,
+            f"{'Total (before cuts)':<{col_w[0]}}  {total_raw:>{col_w[1]},}  {'100.0%':>{col_w[2]}}",
+        ]
+        for sel_cfg in selections:
+            h5_sel = sel_cfg["h5_sel"]
+            sel_name = sel_cfg.get("node_name", "").strip() or "Selection"
+            n_pass = 0
+            for s in active_samples:
+                cache_path = os.path.join(hdir, "cache", f"sel_{h5_sel}_{s}.npz")
+                if os.path.exists(cache_path):
+                    try:
+                        d = np.load(cache_path, mmap_mode='r')
+                        n_pass += len(d["weight"])
+                    except Exception:
+                        pass
+            eff = f"{100.0 * n_pass / total_raw:.1f}%" if total_raw > 0 else "N/A"
+            label = f"After {sel_name}"
+            rows.append(f"{label:<{col_w[0]}}  {n_pass:>{col_w[1]},}  {eff:>{col_w[2]}}")
+        rows.append(sep)
+        update_run_state("cutflow", "\n".join(rows))
+    except Exception:
+        update_run_state("cutflow", "")
+
     return processed_any

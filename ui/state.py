@@ -17,6 +17,7 @@ RUN_STATE = {
     "run_start_time":  0.0,     # time.time() when current run started
     "n_workers":       4,       # number of parallel sample workers (user-configurable)
     "progress_ctx":    None,    # live progress_ctx dict from run_physics_loop (read by poller)
+    "cutflow":         "",      # formatted cut-flow table string, set after run
 }
 
 NODE_HIERARCHY = {

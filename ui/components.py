@@ -254,6 +254,11 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
                               hist_labels=labels, fit_results=fit_results)
             log_to_message_center("Completed.")
 
+            cutflow = safe_get_state("cutflow")
+            if cutflow:
+                log_to_message_center(cutflow)
+                safe_set_state("cutflow", "")
+
             # Discovery popup for new 5-sigma results (skip already-discovered)
             to_discover = [
                 (pidx, res) for pidx, res in fit_results.items()
@@ -376,10 +381,11 @@ def trigger_analysis_pipeline():
         if CURRENT_WORKER.is_alive():
             return
 
-    # Reset fit results from previous run
+    # Reset fit results and cut-flow from previous run
     safe_set_state("fit_mu",      None)
     safe_set_state("fit_sig",     None)
     safe_set_state("fit_results", {})
+    safe_set_state("cutflow",     "")
 
     safe_set_state("progress",       0.0)
     safe_set_state("running",        True)
