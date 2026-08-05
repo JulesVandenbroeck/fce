@@ -100,7 +100,7 @@ _PAGES = [
         "this help at any time.\n\n"
         "The Delete Unconnected button (right side) removes all nodes\n"
         "with no connections (the Data node is always kept).\n\n"
-        "Nodes can also be added via Add Node in the top menu bar.",
+        "Nodes can also be added via Insert Node in the top menu bar.",
         "node_palette_bar", "window",
     ),
     (
