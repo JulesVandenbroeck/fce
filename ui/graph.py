@@ -160,6 +160,17 @@ def link_callback(sender, app_data):
     start_nid = _nid_from_slot(start_slot)
     end_nid   = _nid_from_slot(end_slot)
     if start_nid is not None and end_nid is not None:
+        # Normalize drag direction: user may drag from an input pin to an output
+        # pin (backwards). Detect this via the slot alias and swap so that
+        # src is always the output (data-flow source) side.
+        try:
+            start_alias = dpg.get_item_alias(start_slot) or ""
+            if "slot_in_" in start_alias:
+                start_nid, end_nid = end_nid, start_nid
+                start_slot, end_slot = end_slot, start_slot
+        except Exception:
+            pass
+
         src_type  = REGISTRY.nodes.get(start_nid)
         dst_type  = REGISTRY.nodes.get(end_nid)
         src_level = NODE_HIERARCHY.get(src_type, -1)
@@ -169,9 +180,9 @@ def link_callback(sender, app_data):
         if not same_type_chain and src_level >= dst_level:
             from ui.components import log_to_message_center
             log_to_message_center(
-                f"Cannot connect {NODE_LABELS.get(src_type, src_type)} -> "
-                f"{NODE_LABELS.get(dst_type, dst_type)}: links must follow "
-                f"Data -> Multiplicity -> Selection -> Observable -> Histogram."
+                f"Invalid link: {NODE_LABELS.get(src_type, src_type)} cannot connect to "
+                f"{NODE_LABELS.get(dst_type, dst_type)}. "
+                f"Required order: Data -> Multiplicity -> Selection -> Observable -> Histogram."
             )
             return
     link_id = dpg.add_node_link(start_slot, end_slot, parent=sender)
