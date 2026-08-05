@@ -36,10 +36,10 @@ NODE_LABELS = {
     "Multiplicity":  "Multiplicity",
     "Selection":     "Selection",
     "Observable":    "Observable",
-    "ObsGlobal":     "Observable",
-    "ObsObject":     "Observable",
-    "ObsVectorSum":  "Observable",
-    "ObsCustom":     "Observable",
+    "ObsGlobal":     "Obs: Global",
+    "ObsObject":     "Obs: Object",
+    "ObsVectorSum":  "Obs: Vec Sum",
+    "ObsCustom":     "Obs: Custom",
     "Histogram":     "Histogram",
 }
 
