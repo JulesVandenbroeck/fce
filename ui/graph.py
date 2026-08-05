@@ -1446,10 +1446,10 @@ def on_node_editor_drop(sender, app_data, user_data):
 
 
 def create_node_below_lowest(node_type: str):
-    """Create a node below the lowest existing node of the same type.
+    """Create a node 50 px below the bottom edge of the lowest same-type node.
 
-    Used by palette click callbacks. Falls back to a default position when no
-    node of the given type exists yet.
+    "Bottom edge" = node Y position + rendered node height.  Falls back to a
+    default position when no node of the given type exists yet.
     """
     _TYPE_GROUPS = {
         "ObsGlobal": _OBS_TYPES,
@@ -1460,7 +1460,7 @@ def create_node_below_lowest(node_type: str):
     }
     match_types = _TYPE_GROUPS.get(node_type, {node_type})
 
-    best_x, best_y = 100, 100
+    best_x, best_bottom = 100, 100
     found = False
     for nid, ntype in REGISTRY.nodes.items():
         if ntype not in match_types:
@@ -1469,15 +1469,23 @@ def create_node_below_lowest(node_type: str):
         if not dpg.does_item_exist(tag):
             continue
         nx, ny = dpg.get_item_pos(tag)
-        if not found or ny > best_y:
-            best_x, best_y = nx, ny
+        h = dpg.get_item_height(tag)
+        if h <= 0:
+            h = 150  # fallback before first render
+        bottom = ny + h
+        if not found or bottom > best_bottom:
+            best_x, best_bottom = nx, bottom
             found = True
 
-    create_node(node_type, pos=[best_x, best_y + 100 if found else 100])
+    create_node(node_type, pos=[best_x, best_bottom + 50 if found else 100])
 
 
 def delete_unconnected_nodes():
-    """Delete all nodes that have no links (neither input nor output)."""
+    """Delete all unconnected nodes, storing a single batch undo entry.
+
+    A single Ctrl+Z restores all nodes that were removed in one call.
+    DataSource nodes are never deleted.
+    """
     linked_nids: set = set()
     for _lid, (start_slot, end_slot) in REGISTRY.links.items():
         s_nid = REGISTRY.slot_node.get(start_slot)
@@ -1491,8 +1499,17 @@ def delete_unconnected_nodes():
         nid for nid, ntype in list(REGISTRY.nodes.items())
         if nid not in linked_nids and ntype != "DataSource"
     ]
+    if not to_delete:
+        return
+
+    batch = [snap for nid in to_delete
+             for snap in [_snapshot_node(nid)] if snap]
     for nid in to_delete:
         delete_node(nid, _push_undo=False)
+    if batch:
+        _UNDO_HISTORY.append(
+            batch[0] if len(batch) == 1 else {'type': 'batch', 'items': batch}
+        )
 
 
 # ---------------------------------------------------------------------------
