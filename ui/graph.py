@@ -157,26 +157,20 @@ def _get_and_link_theme() -> int:
     return _AND_LINK_THEME[0]
 
 
-# Pin tooltip text shown when hovering over input/output slots.
-_PIN_IN_TIPS: dict[str, str] = {
-    "Multiplicity": "Input: connect from Data or Multiplicity",
-    "Selection":    "Input: connect from Multiplicity or Selection",
-    "ObsGlobal":    "Input: connect from Selection",
-    "ObsObject":    "Input: connect from Selection",
-    "ObsVectorSum": "Input: connect from Selection",
-    "ObsCustom":    "Input: connect from Selection",
-    "Observable":   "Input: connect from Selection",
-    "Histogram":    "Input: connect from Observable",
-}
-_PIN_OUT_TIPS: dict[str, str] = {
+# Combined connection hint shown when hovering the input pin (or output pin for
+# DataSource which has no input).  Merging both directions into one tooltip avoids
+# the need to attach a tooltip to the output node_attribute, which would fire over
+# all widget children inside that attribute.
+_PIN_TIPS: dict[str, str] = {
     "DataSource":   "Output: connect to Multiplicity or Selection",
-    "Multiplicity": "Output: connect to Multiplicity or Selection",
-    "Selection":    "Output: connect to Observable or Selection (AND-chain)",
-    "ObsGlobal":    "Output: connect to Histogram",
-    "ObsObject":    "Output: connect to Histogram",
-    "ObsVectorSum": "Output: connect to Histogram",
-    "ObsCustom":    "Output: connect to Histogram",
-    "Observable":   "Output: connect to Histogram",
+    "Multiplicity": "Input: from Data or Multiplicity\nOutput: to Multiplicity or Selection",
+    "Selection":    "Input: from Multiplicity or Selection\nOutput: to Observable or Selection (AND-chain)",
+    "ObsGlobal":    "Input: from Selection\nOutput: to Histogram",
+    "ObsObject":    "Input: from Selection\nOutput: to Histogram",
+    "ObsVectorSum": "Input: from Selection\nOutput: to Histogram",
+    "ObsCustom":    "Input: from Selection\nOutput: to Histogram",
+    "Observable":   "Input: from Selection\nOutput: to Histogram",
+    "Histogram":    "Input: from Observable",
 }
 
 # Explicit allowlist of valid src → dst connections.
@@ -1559,17 +1553,19 @@ def create_node(node_type: str, pos: list | None = None, name: str | None = None
     )
 
     # ── Input slot ───────────────────────────────────────────────────────
+    # Tooltip is attached to the spacer child (not the attribute) so the hover
+    # area stays tight around the pin circle and never bleeds into widget text.
     if node_type != "DataSource":
         in_tag = f"slot_in_{nid}"
         dpg.add_node_attribute(
             attribute_type=dpg.mvNode_Attr_Input,
             tag=in_tag, parent=node_tag,
         )
-        dpg.add_spacer(width=4, parent=in_tag)
-        _in_tip = _PIN_IN_TIPS.get(node_type)
-        if _in_tip:
-            with dpg.tooltip(parent=in_tag):
-                dpg.add_text(_in_tip)
+        _pin_spacer = dpg.add_spacer(width=4, parent=in_tag)
+        _tip = _PIN_TIPS.get(node_type)
+        if _tip:
+            with dpg.tooltip(parent=_pin_spacer):
+                dpg.add_text(_tip)
         _register_slot(in_tag, nid)
 
     # ── Output slot (or static for Histogram) ────────────────────────────
@@ -1579,11 +1575,15 @@ def create_node(node_type: str, pos: list | None = None, name: str | None = None
             attribute_type=dpg.mvNode_Attr_Output,
             tag=out_tag, parent=node_tag,
         )
+        if node_type == "DataSource":
+            # DataSource has no input pin; attach its connection hint to a small
+            # spacer placed before the widgets so it fires near the output pin.
+            _ds_spacer = dpg.add_spacer(width=4, parent=out_tag)
+            _tip = _PIN_TIPS.get("DataSource")
+            if _tip:
+                with dpg.tooltip(parent=_ds_spacer):
+                    dpg.add_text(_tip)
         _add_node_widgets(node_type, nid, out_tag)
-        _out_tip = _PIN_OUT_TIPS.get(node_type)
-        if _out_tip:
-            with dpg.tooltip(parent=out_tag):
-                dpg.add_text(_out_tip)
         _register_slot(out_tag, nid)
     else:
         in_tag = f"slot_in_{nid}"
