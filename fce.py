@@ -257,6 +257,55 @@ def _show_about_window(sender=None, app_data=None, user_data=None):
     dpg.configure_item("about_window", show=True)
 
 
+_PALETTE_HELP_W = 520
+_PALETTE_HELP_H = 320
+
+_PALETTE_HELP_TEXT = (
+    "The palette at the bottom of the canvas lets you add nodes.\n\n"
+    "CLICK  -- creates a new node below the lowest existing node of\n"
+    "          the same type (or at a default position if none exist).\n\n"
+    "DRAG   -- drag a button onto the canvas to place the node at\n"
+    "          the exact drop position.\n\n"
+    "Node types available:\n"
+    "  Multiplicity -- filter events by minimum object counts\n"
+    "  Selection    -- filter events with a boolean expression\n"
+    "  Observable   -- click to reveal four sub-types:\n"
+    "                    Global, Object, Vec Sum, Custom\n"
+    "  Histogram    -- set bins, range and optional signal for fitting\n\n"
+    "DELETE UNCONNECTED (right side) -- removes all nodes that have\n"
+    "no connections. The Data node is never deleted.\n\n"
+    "Nodes can also be added via 'Add Node' in the top menu bar."
+)
+
+
+def _show_palette_help(sender=None, app_data=None, user_data=None):
+    if not dpg.does_item_exist("palette_help_window"):
+        with dpg.window(
+            tag="palette_help_window",
+            label="Node Palette - Help",
+            modal=False, show=False,
+            width=_PALETTE_HELP_W, height=_PALETTE_HELP_H,
+            no_resize=True, no_collapse=True,
+            no_scrollbar=True,
+        ):
+            with dpg.child_window(width=-1, height=-40, border=False):
+                dpg.add_spacer(height=6)
+                dpg.add_text(_PALETTE_HELP_TEXT, wrap=_PALETTE_HELP_W - 24)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+            dpg.add_button(
+                label="Close", width=90,
+                callback=lambda: dpg.configure_item("palette_help_window", show=False),
+            )
+    vp_w = dpg.get_viewport_width()
+    vp_h = dpg.get_viewport_height()
+    dpg.set_item_pos("palette_help_window",
+                     [(vp_w - _PALETTE_HELP_W) // 2,
+                      (vp_h - _PALETTE_HELP_H) // 2])
+    dpg.configure_item("palette_help_window", show=True)
+    dpg.focus_item("palette_help_window")
+
+
 def _show_obs_submenu(sender=None, app_data=None, user_data=None):
     dpg.configure_item("palette_main_grp", show=False)
     dpg.configure_item("palette_obs_grp", show=True)
@@ -343,7 +392,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
     with dpg.group(horizontal=True):
 
         # Left: node editor (leaves room for palette at bottom)
-        with dpg.child_window(width=-670, height=-75, border=False,
+        with dpg.child_window(width=-670, height=-85, border=False,
                               tag="node_editor_pane",
                               drop_callback=on_node_editor_drop):
             with dpg.node_editor(
@@ -356,7 +405,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 pass
 
         # Right: controls + plot + console
-        with dpg.child_window(width=660, height=-75, border=False):
+        with dpg.child_window(width=660, height=-85, border=False):
 
             dpg.add_spacer(height=18)
             dpg.add_progress_bar(
@@ -440,12 +489,15 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 )
 
     # ── Node palette (bottom bar) — must be inside the primary window ─────
-    # Palette height 70 px; buttons 44 px → top spacer = (70-44)//2 = 13 px
+    # Height 80 px, no_scrollbar prevents any overflow scroll.
     # A two-column borderless table separates node-creation buttons (left,
     # stretching) from the Delete Unconnected button (right, fixed width).
-    with dpg.child_window(width=-1, height=70, border=True,
+    # Vertical centering: child_window padding is ~8 px top+bottom,
+    # leaving ~64 px usable; spacer = (64 - 44) // 2 = 10 px.
+    with dpg.child_window(width=-1, height=80, border=True,
+                          no_scrollbar=True,
                           tag="node_palette_bar"):
-        dpg.add_spacer(height=13)
+        dpg.add_spacer(height=10)
         with dpg.table(header_row=False,
                        borders_innerH=False, borders_innerV=False,
                        borders_outerH=False, borders_outerV=False,
@@ -460,10 +512,16 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     # ── Main palette view ─────────────────────────────────
                     with dpg.group(horizontal=True, tag="palette_main_grp"):
                         dpg.add_spacer(width=8)
+                        # Label + help button, vertically centred with buttons
                         with dpg.group(horizontal=False):
-                            dpg.add_spacer(height=15)
-                            dpg.add_text("Click or drag ›")
-                        dpg.add_spacer(width=12)
+                            dpg.add_spacer(height=14)
+                            dpg.add_text("Click or drag")
+                        dpg.add_spacer(width=2)
+                        with dpg.group(horizontal=False):
+                            dpg.add_spacer(height=9)
+                            dpg.add_button(label=" ? ", width=26, height=26,
+                                           callback=_show_palette_help)
+                        dpg.add_spacer(width=10)
                         for _pt, _plabel in [("Multiplicity", "Multiplicity"),
                                               ("Selection",    "Selection")]:
                             _pbtn = dpg.add_button(
