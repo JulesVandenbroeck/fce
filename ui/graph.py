@@ -332,6 +332,7 @@ _UNDO_HISTORY: deque = deque(maxlen=10)
 _WIDGET_PREFIXES = (
     "cb_energy_", "cb_detector_",
     "cb_ltype_", "txt_leptons_", "txt_jets_", "txt_photons_",
+    "cb_op_lep_", "cb_op_jet_", "cb_op_phot_",
     "txt_sel_", "txt_obs_", "obs_expr_",
     "cb_target_", "txt_bins_", "txt_range_min_", "txt_range_max_",
 )
@@ -1021,12 +1022,27 @@ def _obs_rebuild_object_rows(nid: int, pairs: list):
             callback=lambda s, a, u: _obs_obj_change(u[0], u[1], a),
             user_data=(nid, i), parent=row,
         )
+        var_combo_tag = f"obs_o_var_{nid}_{i}"
         dpg.add_combo(
             valid_vars, default_value=var,
-            tag=f"obs_o_var_{nid}_{i}", width=60,
+            tag=var_combo_tag, width=60,
             callback=lambda s, a, u: _build_obs_expr(u, "ObsObject"),
             user_data=nid, parent=row,
         )
+        with dpg.tooltip(parent=var_combo_tag):
+            dpg.add_text(
+                "Variable options for the selected object:\n\n"
+                "  pt   - transverse momentum [GeV]\n"
+                "  eta  - pseudorapidity\n"
+                "  phi  - azimuthal angle [rad]\n"
+                "  e    - energy [GeV]\n"
+                "  d0   - transverse impact parameter (leptons)\n"
+                "  z0   - longitudinal impact parameter (leptons)\n"
+                "  btag - b-tagging discriminant [0, 1] (jets only)\n"
+                "         Values near 1 indicate a b-jet.\n"
+                "         Typical working point: btag > 0.7\n"
+                "         (~70% b-jet efficiency, ~1% light-jet rate)"
+            )
         if i < n - 1:
             dpg.add_text("+", parent=row)
         if n > 1:
@@ -1221,26 +1237,30 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
             dpg.add_text(
                 "Multiplicity = the number of reconstructed\n"
                 "particles of each type in a collision event.\n\n"
-                "Set the minimum count per type that the\n"
-                "analysis requires. Use 0 for no requirement.",
+                "Set the count threshold and comparison operator\n"
+                "for each particle type (0 = no requirement).",
             )
         dpg.add_combo(
             ["Any", "Electron", "Muon"],
             label="Lepton", tag=f"cb_ltype_{nid}",
             default_value="Any", width=90, parent=parent_tag,
         )
-        dpg.add_input_int(
-            label="Min Leptons", tag=f"txt_leptons_{nid}",
-            default_value=0, width=90, parent=parent_tag,
-        )
-        dpg.add_input_int(
-            label="Min Jets", tag=f"txt_jets_{nid}",
-            default_value=0, width=90, parent=parent_tag,
-        )
-        dpg.add_input_int(
-            label="Min Photons", tag=f"txt_photons_{nid}",
-            default_value=0, width=90, parent=parent_tag,
-        )
+        _ops = [">=", "==", "<="]
+        with dpg.group(horizontal=True, parent=parent_tag):
+            dpg.add_combo(_ops, tag=f"cb_op_lep_{nid}",
+                          default_value=">=", width=45)
+            dpg.add_input_int(label="Leptons", tag=f"txt_leptons_{nid}",
+                              default_value=0, width=60)
+        with dpg.group(horizontal=True, parent=parent_tag):
+            dpg.add_combo(_ops, tag=f"cb_op_jet_{nid}",
+                          default_value=">=", width=45)
+            dpg.add_input_int(label="Jets", tag=f"txt_jets_{nid}",
+                              default_value=0, width=60)
+        with dpg.group(horizontal=True, parent=parent_tag):
+            dpg.add_combo(_ops, tag=f"cb_op_phot_{nid}",
+                          default_value=">=", width=45)
+            dpg.add_input_int(label="Photons", tag=f"txt_photons_{nid}",
+                              default_value=0, width=60)
 
     elif node_type == "Selection":
         _make_expr_widgets(
@@ -1683,7 +1703,10 @@ def compile_graph_topology() -> dict:
         njets = int(dpg.get_value(f"txt_jets_{n}"))
         ltype = dpg.get_value(f"cb_ltype_{n}") if dpg.does_item_exist(f"cb_ltype_{n}") else "Any"
         nphot = int(dpg.get_value(f"txt_photons_{n}")) if dpg.does_item_exist(f"txt_photons_{n}") else 0
-        mult_cuts.append((nlep, njets, ltype, nphot))
+        op_lep  = dpg.get_value(f"cb_op_lep_{n}") if dpg.does_item_exist(f"cb_op_lep_{n}") else ">="
+        op_jet  = dpg.get_value(f"cb_op_jet_{n}") if dpg.does_item_exist(f"cb_op_jet_{n}") else ">="
+        op_phot = dpg.get_value(f"cb_op_phot_{n}") if dpg.does_item_exist(f"cb_op_phot_{n}") else ">="
+        mult_cuts.append((nlep, op_lep, njets, op_jet, ltype, nphot, op_phot))
 
     # Build per-node successor/predecessor maps from all links
     node_successors   = {}  # nid -> [nid, ...]
