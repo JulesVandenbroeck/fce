@@ -455,12 +455,28 @@ def filter_raw_event_data(arrays, nev, cfg, outHist, observable_target,
             # ── Multiplicity cuts ────────────────────────────────────────
             skip = False
             for cut in mult_cuts:
-                cut_nlep, cut_njets = cut[0], cut[1]
-                ltype = cut[2] if len(cut) > 2 else "Any"
-                cut_nphot = cut[3] if len(cut) > 3 else 0
+                if len(cut) == 7:
+                    cut_nlep, op_lep, cut_njets, op_jet, ltype, cut_nphot, op_phot = cut
+                else:
+                    # Legacy 4-tuple format: (nlep, njets, ltype, nphot)
+                    cut_nlep, cut_njets = cut[0], cut[1]
+                    ltype = cut[2] if len(cut) > 2 else "Any"
+                    cut_nphot = cut[3] if len(cut) > 3 else 0
+                    op_lep = op_jet = op_phot = ">="
                 count = {"Electron": nel, "Muon": nmu}.get(ltype, nlep)
-                if count < cut_nlep or njets < cut_njets or nphot < cut_nphot:
-                    skip = True; break
+
+                def _cmp(actual, op, threshold):
+                    if op == "==":
+                        return actual == threshold
+                    if op == "<=":
+                        return actual <= threshold
+                    return actual >= threshold
+
+                if not (_cmp(count, op_lep, cut_nlep)
+                        and _cmp(njets, op_jet, cut_njets)
+                        and _cmp(nphot, op_phot, cut_nphot)):
+                    skip = True
+                    break
             if skip:
                 continue
 
