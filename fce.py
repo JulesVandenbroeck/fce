@@ -121,14 +121,18 @@ with dpg.window(tag="help_expr_window", label="Expression Guide",
         "  Photons:  ph1.pt  ph1.eta  ph1.phi  ph1.e  ph1.p4\n"
         "            ph2.pt  ph2.eta  ph2.phi  ph2.e  ph2.p4\n\n"
         "  MET    :  met.pt  met.eta  met.phi  met.e  met.p4\n\n"
+        "  Note: at most 2 objects per type are accessible (l1/l2, j1/j2,\n"
+        "  ph1/ph2). Objects are pT-sorted; accessing l2 when only one\n"
+        "  lepton is present may yield undefined results.\n\n"
         "4-vector arithmetic (p4 objects)\n\n"
-        "  (l1.p4 + l2.p4).mass   →  invariant mass\n"
-        "  (l1.p4 + l2.p4).pt     →  system pT\n"
-        "  l1.p4.deltaR(l2.p4)    →  ΔR\n"
-        "  deltaR(l1, l2)          →  ΔR via eta/phi\n"
-        "  l1.pt + l2.pt           →  sum pT\n\n"
+        "  (l1.p4 + l2.p4).mass   ->  invariant mass\n"
+        "  (l1.p4 + l2.p4).pt     ->  system pT\n"
+        "  l1.p4.deltaR(l2.p4)    ->  DeltaR\n"
+        "  deltaR(l1, l2)          ->  DeltaR via eta/phi\n"
+        "  l1.pt + l2.pt           ->  sum pT\n\n"
         "Operators :  > < >= <= == !=\n"
-        "Logic     :  and  or  not  ( )"
+        "Logic     :  and  or  not  ( )\n"
+        "             && || !  also accepted"
     )
     dpg.add_spacer(height=8)
     dpg.add_button(
@@ -183,24 +187,33 @@ with dpg.window(tag="node_error_window", label="Node Error",
 
 # ── Discovery popup ──────────────────────────────────────────────────────────
 with dpg.window(tag="discovery_window", label="*** DISCOVERY ***",
-                modal=True, show=False, width=420, height=230,
+                modal=True, show=False, width=420, height=260,
                 no_resize=True):
     dpg.add_spacer(height=10)
     dpg.add_text("", tag="discovery_title_text", wrap=400)
     dpg.add_spacer(height=6)
     dpg.add_text("", tag="discovery_detail_text", wrap=400)
     dpg.add_spacer(height=10)
-    dpg.add_text("Name this process:")
+    dpg.add_text("Give this process a name (optional):")
     dpg.add_input_text(tag="discovery_process_name_input", width=-1,
-                       hint="e.g. Higgs boson")
+                       hint="e.g. Z boson, Higgs boson, ...")
     dpg.add_spacer(height=10)
-    dpg.add_button(
-        label="Celebrate!",
-        callback=lambda: save_discovery_process_name(
-            dpg.get_value("discovery_process_name_input")
-        ),
-        width=-1, height=32,
-    )
+    with dpg.group(horizontal=True):
+        dpg.add_button(
+            label="Confirm Name",
+            tag="btn_discovery_confirm",
+            callback=lambda: save_discovery_process_name(
+                dpg.get_value("discovery_process_name_input")
+            ),
+            width=-2, height=32,
+        )
+        dpg.add_spacer(width=6)
+        dpg.add_button(
+            label="Skip",
+            tag="btn_discovery_skip",
+            callback=lambda: save_discovery_process_name(""),
+            width=70, height=32,
+        )
 
 
 # ── Window show helpers ───────────────────────────────────────────────────────
@@ -274,7 +287,7 @@ _PALETTE_HELP_TEXT = (
     "  Histogram    -- set bins, range and optional signal for fitting\n\n"
     "DELETE UNCONNECTED (right side) -- removes all nodes that have\n"
     "no connections. The Data node is never deleted.\n\n"
-    "Nodes can also be added via 'Add Node' in the top menu bar."
+    "Nodes can also be added via 'Insert Node' in the top menu bar."
 )
 
 
@@ -351,7 +364,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                                 user_data=(_det, _en),
                             )
 
-        with dpg.menu(label="Add Node"):
+        with dpg.menu(label="Insert Node"):
             dpg.add_menu_item(
                 label="Multiplicity",
                 callback=lambda: create_node("Multiplicity"),
