@@ -9,13 +9,14 @@ from ui.state import REGISTRY, NODE_LABELS
 # ---------------------------------------------------------------------------
 SEL_ALL_VARS = [
     "nlep", "nel", "nmu", "njets", "nphot",
-    "l1.pt", "l1.eta", "l1.phi", "l1.e", "l1.d0", "l1.z0", "l1.p4",
-    "l2.pt", "l2.eta", "l2.phi", "l2.e", "l2.d0", "l2.z0", "l2.p4",
+    "l1.pt", "l1.eta", "l1.phi", "l1.e", "l1.d0", "l1.z0", "l1.charge", "l1.flavour", "l1.p4",
+    "l2.pt", "l2.eta", "l2.phi", "l2.e", "l2.d0", "l2.z0", "l2.charge", "l2.flavour", "l2.p4",
     "j1.pt", "j1.eta", "j1.phi", "j1.e", "j1.btag", "j1.p4",
     "j2.pt", "j2.eta", "j2.phi", "j2.e", "j2.btag", "j2.p4",
     "ph1.pt", "ph1.eta", "ph1.phi", "ph1.e", "ph1.p4",
     "ph2.pt", "ph2.eta", "ph2.phi", "ph2.e", "ph2.p4",
-    "met.pt", "met.eta", "met.phi", "met.e", "met.p4",
+    "met.pt", "met.phi",
+    "mT(l1, met)", "mT(l2, met)",
 ]
 
 _SEL_MAX_SUGS = 5
@@ -40,7 +41,7 @@ _OBJ_VARS = {
     "j2":  ["pt", "eta", "phi", "e", "btag"],
     "ph1": ["pt", "eta", "phi", "e"],
     "ph2": ["pt", "eta", "phi", "e"],
-    "met": ["pt", "eta", "phi", "e"],
+    "met": ["pt", "phi"],
 }
 
 _VEC_RESULT_VARS = ["mass", "pt", "eta", "phi", "e"]
