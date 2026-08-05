@@ -167,6 +167,12 @@ def link_callback(sender, app_data):
         # Allow same-type chaining for Multiplicity and Selection (AND logic)
         same_type_chain = src_type == dst_type and src_type in _CHAINABLE_TYPES
         if not same_type_chain and src_level >= dst_level:
+            from ui.components import log_to_message_center
+            log_to_message_center(
+                f"Cannot connect {NODE_LABELS.get(src_type, src_type)} -> "
+                f"{NODE_LABELS.get(dst_type, dst_type)}: links must follow "
+                f"Data -> Multiplicity -> Selection -> Observable -> Histogram."
+            )
             return
     link_id = dpg.add_node_link(start_slot, end_slot, parent=sender)
     REGISTRY.links[link_id] = (start_slot, end_slot)
@@ -220,8 +226,8 @@ def _on_wheel_pan(sender=None, app_data=None, user_data=None):
         return
     delta = app_data  # +1 = scroll up, -1 = scroll down
     shift = dpg.is_key_down(dpg.mvKey_LShift) or dpg.is_key_down(dpg.mvKey_RShift)
-    dx = int(delta * _PAN_SPEED) if shift else 0
-    dy = int(delta * _PAN_SPEED) if not shift else 0
+    dx = int(-delta * _PAN_SPEED) if shift else 0
+    dy = int(-delta * _PAN_SPEED) if not shift else 0
     _pan_all_nodes(dx, dy)
 
 
@@ -806,6 +812,9 @@ def _build_obs_expr(nid: int, subtype: str):
         return
 
     dpg.set_value(expr_tag, expr)
+    expr_label_tag = f"lbl_obs_preview_{nid}"
+    if dpg.does_item_exist(expr_label_tag):
+        dpg.set_value(expr_label_tag, f"Expr: {expr}")
 
 
 def _build_obs_label(nid: int, subtype: str) -> str:
@@ -1163,6 +1172,10 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
             callback=lambda s, a, u: _obs_add_global_row(u),
             user_data=nid,
         )
+        dpg.add_text(
+            f"Expr: {_GLOBAL_VARS[0]}", tag=f"lbl_obs_preview_{nid}",
+            color=(180, 180, 180, 200), parent=parent_tag,
+        )
 
     elif node_type == "ObsObject":
         dpg.add_input_text(
@@ -1175,6 +1188,10 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
             label="+", small=True, parent=parent_tag,
             callback=lambda s, a, u: _obs_add_object_row(u),
             user_data=nid,
+        )
+        dpg.add_text(
+            "Expr: met.pt", tag=f"lbl_obs_preview_{nid}",
+            color=(180, 180, 180, 200), parent=parent_tag,
         )
 
     elif node_type == "ObsVectorSum":
@@ -1194,6 +1211,10 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
             label="+", small=True, parent=parent_tag,
             callback=lambda s, a, u: _obs_add_vecsum_row(u),
             user_data=nid,
+        )
+        dpg.add_text(
+            "Expr: (l1.p4 + l2.p4).mass", tag=f"lbl_obs_preview_{nid}",
+            color=(180, 180, 180, 200), parent=parent_tag,
         )
 
     elif node_type == "Histogram":
