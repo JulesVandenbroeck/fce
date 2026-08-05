@@ -1473,7 +1473,7 @@ def create_node_below_lowest(node_type: str):
             best_x, best_y = nx, ny
             found = True
 
-    create_node(node_type, pos=[best_x, best_y + 250 if found else 100])
+    create_node(node_type, pos=[best_x, best_y + 100 if found else 100])
 
 
 def delete_unconnected_nodes():

@@ -441,58 +441,89 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
 
     # ── Node palette (bottom bar) — must be inside the primary window ─────
     # Palette height 70 px; buttons 44 px → top spacer = (70-44)//2 = 13 px
+    # A two-column borderless table separates node-creation buttons (left,
+    # stretching) from the Delete Unconnected button (right, fixed width).
     with dpg.child_window(width=-1, height=70, border=True,
                           tag="node_palette_bar"):
         dpg.add_spacer(height=13)
+        with dpg.table(header_row=False,
+                       borders_innerH=False, borders_innerV=False,
+                       borders_outerH=False, borders_outerV=False,
+                       pad_outerX=False):
+            dpg.add_table_column(init_width_or_weight=1.0, width_stretch=True)
+            dpg.add_table_column(init_width_or_weight=186.0, width_fixed=True)
+            with dpg.table_row():
 
-        # ── Main palette view ─────────────────────────────────────────────
-        with dpg.group(horizontal=True, tag="palette_main_grp"):
-            dpg.add_spacer(width=8)
-            with dpg.group(horizontal=False):
-                dpg.add_spacer(height=15)
-                dpg.add_text("Click or drag ›")
-            dpg.add_spacer(width=12)
-            for _pt, _plabel in [("Multiplicity", "Multiplicity"),
-                                  ("Selection",    "Selection")]:
-                _pbtn = dpg.add_button(label=_plabel, width=160, height=44,
-                                       callback=lambda s, a, u: create_node_below_lowest(u),
-                                       user_data=_pt)
-                with dpg.drag_payload(parent=_pbtn, drag_data=_pt,
-                                      label=f"  + {_plabel}  "):
-                    pass
-                dpg.add_spacer(width=8)
-            # Observable button — click to expand submenu (not draggable)
-            dpg.add_button(label="Observable", width=160, height=44,
-                           callback=_show_obs_submenu)
-            dpg.add_spacer(width=8)
-            _pbtn = dpg.add_button(label="Histogram", width=160, height=44,
-                                   callback=lambda s, a, u: create_node_below_lowest(u),
-                                   user_data="Histogram")
-            with dpg.drag_payload(parent=_pbtn, drag_data="Histogram",
-                                  label="  + Histogram  "):
-                pass
-            dpg.add_spacer(width=8)
-            dpg.add_button(label="Delete Unconnected", width=170, height=44,
-                           callback=lambda: delete_unconnected_nodes())
-            dpg.add_spacer(width=8)
+                # ── Left cell: node-creation buttons ─────────────────────
+                with dpg.table_cell():
 
-        # ── Observable submenu view (hidden until Observable is clicked) ──
-        with dpg.group(horizontal=True, tag="palette_obs_grp", show=False):
-            dpg.add_spacer(width=8)
-            dpg.add_button(label="< Back", width=90, height=44,
-                           callback=_show_main_palette)
-            dpg.add_spacer(width=12)
-            for _pt, _pl in [("ObsGlobal",    "Global"),
-                              ("ObsObject",    "Object"),
-                              ("ObsVectorSum", "Vec Sum"),
-                              ("ObsCustom",    "Custom")]:
-                _pb = dpg.add_button(label=_pl, width=130, height=44,
-                                     callback=lambda s, a, u: create_node_below_lowest(u),
-                                     user_data=_pt)
-                with dpg.drag_payload(parent=_pb, drag_data=_pt,
-                                      label=f"  + {_pl}  "):
-                    pass
-                dpg.add_spacer(width=8)
+                    # ── Main palette view ─────────────────────────────────
+                    with dpg.group(horizontal=True, tag="palette_main_grp"):
+                        dpg.add_spacer(width=8)
+                        with dpg.group(horizontal=False):
+                            dpg.add_spacer(height=15)
+                            dpg.add_text("Click or drag ›")
+                        dpg.add_spacer(width=12)
+                        for _pt, _plabel in [("Multiplicity", "Multiplicity"),
+                                              ("Selection",    "Selection")]:
+                            _pbtn = dpg.add_button(
+                                label=_plabel, width=160, height=44,
+                                callback=lambda s, a, u: create_node_below_lowest(u),
+                                user_data=_pt,
+                            )
+                            with dpg.drag_payload(parent=_pbtn, drag_data=_pt,
+                                                  label=f"  + {_plabel}  "):
+                                pass
+                            dpg.add_spacer(width=8)
+                        # Observable button — click to expand submenu (not draggable)
+                        dpg.add_button(label="Observable", width=160, height=44,
+                                       callback=_show_obs_submenu)
+                        dpg.add_spacer(width=8)
+                        _pbtn = dpg.add_button(label="Histogram", width=160, height=44,
+                                               callback=lambda s, a, u: create_node_below_lowest(u),
+                                               user_data="Histogram")
+                        with dpg.drag_payload(parent=_pbtn, drag_data="Histogram",
+                                              label="  + Histogram  "):
+                            pass
+
+                    # ── Observable submenu (hidden until Observable clicked) ──
+                    with dpg.group(horizontal=True, tag="palette_obs_grp",
+                                   show=False):
+                        dpg.add_spacer(width=8)
+                        dpg.add_button(label="< Back", width=90, height=44,
+                                       callback=_show_main_palette)
+                        dpg.add_spacer(width=12)
+                        for _pt, _pl in [("ObsGlobal",    "Global"),
+                                          ("ObsObject",    "Object"),
+                                          ("ObsVectorSum", "Vec Sum"),
+                                          ("ObsCustom",    "Custom")]:
+                            _pb = dpg.add_button(
+                                label=_pl, width=130, height=44,
+                                callback=lambda s, a, u: create_node_below_lowest(u),
+                                user_data=_pt,
+                            )
+                            with dpg.drag_payload(parent=_pb, drag_data=_pt,
+                                                  label=f"  + {_pl}  "):
+                                pass
+                            dpg.add_spacer(width=8)
+
+                # ── Right cell: delete unconnected (right-aligned) ────────
+                with dpg.table_cell():
+                    dpg.add_spacer(width=8)
+                    dpg.add_button(label="Delete Unconnected", width=170, height=44,
+                                   tag="btn_delete_unconnected",
+                                   callback=lambda: delete_unconnected_nodes())
+
+# ── Delete Unconnected button dark-red theme ──────────────────────────────────
+with dpg.theme(tag="delete_unconnected_theme"):
+    with dpg.theme_component(dpg.mvButton):
+        dpg.add_theme_color(dpg.mvThemeCol_Button,        (139, 30, 30),
+                            category=dpg.mvThemeCat_Core)
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (170, 50, 50),
+                            category=dpg.mvThemeCat_Core)
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (110, 20, 20),
+                            category=dpg.mvThemeCat_Core)
+dpg.bind_item_theme("btn_delete_unconnected", "delete_unconnected_theme")
 
 # ── Progress bar green theme ──────────────────────────────────────────────────
 with dpg.theme(tag="progress_bar_theme"):
