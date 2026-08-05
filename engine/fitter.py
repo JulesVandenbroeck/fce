@@ -75,14 +75,41 @@ def run_fit(cfg, samples, en, hist_idx=0):
         return None, None
 
     bkg_unc = [max(float(np.sqrt(b)), 0.01) for b in bkg_vals]
+    lumi_unc = float(cfg.get("lumi_unc", 0.0))
+    bkg_norm_unc = float(cfg.get("bkg_norm_unc", 0.0))
 
     try:
         import pyhf
-        model = pyhf.simplemodels.uncorrelated_background(
-            signal=signal_vals,
-            bkg=bkg_vals,
-            bkg_uncertainty=bkg_unc,
-        )
+        use_syst = lumi_unc > 0.0 or bkg_norm_unc > 0.0
+        if use_syst:
+            signal_modifiers = [{"name": "mu", "type": "normfactor", "data": None}]
+            bkg_modifiers = [{"name": "bkg_unc", "type": "shapesys", "data": bkg_unc}]
+            if lumi_unc > 0.0:
+                lumi_mod = {"name": "lumi", "type": "normsys",
+                            "data": {"hi": 1.0 + lumi_unc, "lo": max(0.01, 1.0 - lumi_unc)}}
+                signal_modifiers.append(lumi_mod)
+                bkg_modifiers.append(lumi_mod)
+            if bkg_norm_unc > 0.0:
+                bkg_modifiers.append({"name": "bkgnorm", "type": "normsys",
+                                      "data": {"hi": 1.0 + bkg_norm_unc,
+                                               "lo": max(0.01, 1.0 - bkg_norm_unc)}})
+            spec = {
+                "channels": [{"name": "singlechannel", "samples": [
+                    {"name": "signal", "data": signal_vals, "modifiers": signal_modifiers},
+                    {"name": "background", "data": bkg_vals, "modifiers": bkg_modifiers},
+                ]}],
+                "observations": [{"name": "singlechannel", "data": data_obs}],
+                "measurements": [{"name": "Measurement",
+                                  "config": {"poi": "mu", "parameters": []}}],
+                "version": "1.0.0",
+            }
+            model = pyhf.Model(spec)
+        else:
+            model = pyhf.simplemodels.uncorrelated_background(
+                signal=signal_vals,
+                bkg=bkg_vals,
+                bkg_uncertainty=bkg_unc,
+            )
         obs_data = pyhf.tensorlib.astensor(data_obs + model.config.auxdata)
 
         _sink = io.StringIO()

@@ -306,11 +306,13 @@ _WIDGET_PREFIXES = (
     "cb_ltype_", "txt_leptons_", "txt_jets_", "txt_photons_",
     "txt_sel_", "txt_obs_", "obs_expr_",
     "cb_target_", "txt_bins_", "txt_range_min_", "txt_range_max_",
+    "txt_lumi_unc_", "txt_bkg_norm_unc_",
 )
 
 _INPUT_PREFIXES = (
     "txt_sel_", "txt_obs_", "txt_name_",
     "txt_bins_", "txt_range_min_", "txt_range_max_",
+    "txt_lumi_unc_", "txt_bkg_norm_unc_",
     "txt_leptons_", "txt_jets_", "txt_photons_",
 )
 
@@ -1269,6 +1271,31 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
             label="Max Range", tag=f"txt_range_max_{nid}",
             default_value=150.0, width=90, parent=parent_tag,
         )
+        dpg.add_input_float(
+            label="Lumi. unc. %", tag=f"txt_lumi_unc_{nid}",
+            default_value=0.0, min_value=0.0, max_value=100.0,
+            min_clamped=True, max_clamped=True,
+            width=90, parent=parent_tag,
+        )
+        _lumi_tip = f"lumi_tip_{nid}"
+        with dpg.tooltip(parent=f"txt_lumi_unc_{nid}", tag=_lumi_tip):
+            dpg.add_text(
+                "Luminosity uncertainty (%) applied to both signal and background.\n"
+                "Typical values: 1-5%. Set 0 to disable.",
+            )
+        dpg.add_input_float(
+            label="Bkg. norm. %", tag=f"txt_bkg_norm_unc_{nid}",
+            default_value=0.0, min_value=0.0, max_value=100.0,
+            min_clamped=True, max_clamped=True,
+            width=90, parent=parent_tag,
+        )
+        _bkg_tip = f"bkg_tip_{nid}"
+        with dpg.tooltip(parent=f"txt_bkg_norm_unc_{nid}", tag=_bkg_tip):
+            dpg.add_text(
+                "Background normalisation uncertainty (%) applied as a flat\n"
+                "uncertainty on the total background yield.\n"
+                "Typical values: 10-30%. Set 0 to disable.",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1701,11 +1728,17 @@ def compile_graph_topology() -> dict:
         rng_max = (str(dpg.get_value(f"txt_range_max_{hist_nid}"))
                    if dpg.does_item_exist(f"txt_range_max_{hist_nid}") else "150.0")
         node_name = REGISTRY.node_names.get(hist_nid, "")
+        lumi_unc = (dpg.get_value(f"txt_lumi_unc_{hist_nid}")
+                    if dpg.does_item_exist(f"txt_lumi_unc_{hist_nid}") else 0.0)
+        bkg_norm_unc = (dpg.get_value(f"txt_bkg_norm_unc_{hist_nid}")
+                        if dpg.does_item_exist(f"txt_bkg_norm_unc_{hist_nid}") else 0.0)
         hcfg_raw = {
             "observable": observable, "x_label": x_label,
             "bins": bins, "min": rng_min, "max": rng_max,
             "target": target, "node_name": node_name,
             "obs_nid": obs_nid, "hist_nid": hist_nid,
+            "lumi_unc": lumi_unc / 100.0,
+            "bkg_norm_unc": bkg_norm_unc / 100.0,
         }
 
         if sel_nid is not None:
