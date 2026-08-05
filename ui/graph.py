@@ -2,7 +2,7 @@ import re
 from collections import deque
 import dearpygui.dearpygui as dpg
 import ui.state as _state
-from ui.state import REGISTRY, NODE_HIERARCHY, NODE_LABELS
+from ui.state import REGISTRY, NODE_LABELS
 
 # ---------------------------------------------------------------------------
 # Variable catalogue for autocomplete
@@ -136,6 +136,21 @@ def _nid_from_slot(slot_id) -> int | None:
 
 _CHAINABLE_TYPES = {"Multiplicity", "Selection"}
 
+# Explicit allowlist of valid src → dst connections.
+# Observable subtypes are grouped together on the destination side.
+_OBS_TYPES_SET = {"Observable", "ObsGlobal", "ObsObject", "ObsVectorSum", "ObsCustom"}
+_VALID_CONNECTIONS: dict[str, set[str]] = {
+    "DataSource":   {"Multiplicity", "Selection"},
+    "Multiplicity": {"Multiplicity", "Selection"},
+    "Selection":    {"Selection"} | _OBS_TYPES_SET,
+    "Observable":   {"Histogram"},
+    "ObsGlobal":    {"Histogram"},
+    "ObsObject":    {"Histogram"},
+    "ObsVectorSum": {"Histogram"},
+    "ObsCustom":    {"Histogram"},
+    "Histogram":    set(),
+}
+
 
 def _normalize_slot(slot_id):
     """Normalize a slot identifier to its integer alias id.
@@ -160,9 +175,8 @@ def link_callback(sender, app_data):
     start_nid = _nid_from_slot(start_slot)
     end_nid   = _nid_from_slot(end_slot)
     if start_nid is not None and end_nid is not None:
-        # Normalize drag direction: user may drag from an input pin to an output
-        # pin (backwards). Detect this via the slot alias and swap so that
-        # src is always the output (data-flow source) side.
+        # Normalize drag direction: if the user started from an input pin swap
+        # start/end so src is always the data-flow source (output-pin side).
         try:
             start_alias = dpg.get_item_alias(start_slot) or ""
             if "slot_in_" in start_alias:
@@ -171,19 +185,26 @@ def link_callback(sender, app_data):
         except Exception:
             pass
 
-        src_type  = REGISTRY.nodes.get(start_nid)
-        dst_type  = REGISTRY.nodes.get(end_nid)
-        src_level = NODE_HIERARCHY.get(src_type, -1)
-        dst_level = NODE_HIERARCHY.get(dst_type, 99)
-        # Allow same-type chaining for Multiplicity and Selection (AND logic)
-        same_type_chain = src_type == dst_type and src_type in _CHAINABLE_TYPES
-        if not same_type_chain and src_level >= dst_level:
+        src_type = REGISTRY.nodes.get(start_nid)
+        dst_type = REGISTRY.nodes.get(end_nid)
+        valid_dsts = _VALID_CONNECTIONS.get(src_type, set())
+
+        if dst_type not in valid_dsts:
             from ui.components import log_to_message_center
-            log_to_message_center(
-                f"Invalid link: {NODE_LABELS.get(src_type, src_type)} cannot connect to "
-                f"{NODE_LABELS.get(dst_type, dst_type)}. "
-                f"Required order: Data -> Multiplicity -> Selection -> Observable -> Histogram."
-            )
+            src_label = NODE_LABELS.get(src_type, src_type)
+            dst_label = NODE_LABELS.get(dst_type, dst_type)
+            if valid_dsts:
+                valid_str = ", ".join(
+                    NODE_LABELS.get(t, t) for t in sorted(valid_dsts)
+                )
+                log_to_message_center(
+                    f"Invalid link: {src_label} -> {dst_label}. "
+                    f"{src_label} can only connect to: {valid_str}."
+                )
+            else:
+                log_to_message_center(
+                    f"Invalid link: {src_label} has no valid outputs."
+                )
             return
     link_id = dpg.add_node_link(start_slot, end_slot, parent=sender)
     REGISTRY.links[link_id] = (start_slot, end_slot)
