@@ -101,7 +101,7 @@ def _process_sample(sel_cfg, s, idx, active_samples, cfg,
                 v_keys = [k for k in tr.keys()
                           if "pt" in k or "eta" in k or "phi" in k
                           or "e" in k or "weight" in k or "btag" in k
-                          or "d0signif" in k or "z0signif" in k]
+                          or "d0signif" in k or "z0signif" in k or "charge" in k]
 
                 # Claim the lowest free slot so bars fill top-to-bottom.
                 with progress_ctx["slot_lock"]:
