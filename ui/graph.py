@@ -772,52 +772,59 @@ def validate_node_expressions() -> list[tuple[int, str]]:
     return errors
 
 
-def check_multiplicity_bounds() -> list[str]:
-    """Return warning strings when Multiplicity minimum counts are lower than
-    what Selection or Observable expressions actually access.
+def check_selection_obs_bounds() -> list[str]:
+    """Return warning strings when an Observable uses l2/j2/ph2 but the
+    Selection expression linked upstream does not guarantee 2+ of that type.
 
-    Delegates pure logic to engine.path_filter.check_mult_bounds_for_exprs so
-    that logic can be unit-tested without a live DPG context.
+    Delegates pure logic to engine.path_filter.check_obs_bounds_for_selection
+    so that logic can be unit-tested without a live DPG context.
     """
-    from engine.path_filter import check_mult_bounds_for_exprs
+    from engine.path_filter import check_obs_bounds_for_selection
 
     nodes = REGISTRY.nodes
 
-    # ── Collect all expressions from Selection and Observable nodes ──────────
-    exprs: list[str] = []
-    for nid, ntype in nodes.items():
-        if ntype == "Selection":
-            tag = f"txt_sel_{nid}"
-        elif ntype in ("Observable", "ObsCustom"):
+    # Build successor map from links
+    node_successors: dict[int, list[int]] = {}
+    for _, (start_slot, end_slot) in REGISTRY.links.items():
+        s_nid = REGISTRY.slot_node.get(start_slot)
+        e_nid = REGISTRY.slot_node.get(end_slot)
+        if s_nid is not None and e_nid is not None:
+            node_successors.setdefault(s_nid, []).append(e_nid)
+
+    def _get_expr(nid: int, ntype: str) -> str:
+        if ntype in ("Observable", "ObsCustom"):
             tag = f"txt_obs_{nid}"
         elif _is_obs(ntype):
             tag = f"obs_expr_{nid}"
         else:
+            return ""
+        return dpg.get_value(tag).strip() if dpg.does_item_exist(tag) else ""
+
+    warnings: list[str] = []
+    for sel_nid, sel_type in nodes.items():
+        if sel_type != "Selection":
             continue
-        if dpg.does_item_exist(tag):
-            v = dpg.get_value(tag).strip()
-            if v:
-                exprs.append(v)
 
-    # ── Read effective minimum from all Multiplicity nodes ───────────────────
-    def _eff_min(count: int, op: str) -> int:
-        return count if op in (">=", "==") else 0
+        sel_tag = f"txt_sel_{sel_nid}"
+        sel_expr = dpg.get_value(sel_tag).strip() if dpg.does_item_exist(sel_tag) else ""
 
-    eff_lep = eff_jet = eff_phot = 0
-    for n in [nid for nid, t in nodes.items() if t == "Multiplicity"]:
-        nlep  = int(dpg.get_value(f"txt_leptons_{n}"))  if dpg.does_item_exist(f"txt_leptons_{n}")  else 0
-        njets = int(dpg.get_value(f"txt_jets_{n}"))     if dpg.does_item_exist(f"txt_jets_{n}")     else 0
-        nphot = int(dpg.get_value(f"txt_photons_{n}"))  if dpg.does_item_exist(f"txt_photons_{n}")  else 0
-        op_lep  = dpg.get_value(f"cb_op_lep_{n}")  if dpg.does_item_exist(f"cb_op_lep_{n}")  else ">="
-        op_jet  = dpg.get_value(f"cb_op_jet_{n}")  if dpg.does_item_exist(f"cb_op_jet_{n}")  else ">="
-        op_phot = dpg.get_value(f"cb_op_phot_{n}") if dpg.does_item_exist(f"cb_op_phot_{n}") else ">="
-        ltype   = dpg.get_value(f"cb_ltype_{n}")   if dpg.does_item_exist(f"cb_ltype_{n}")   else "Any"
-        if ltype == "Any":
-            eff_lep = max(eff_lep, _eff_min(nlep, op_lep))
-        eff_jet  = max(eff_jet,  _eff_min(njets, op_jet))
-        eff_phot = max(eff_phot, _eff_min(nphot, op_phot))
+        # Collect Observable expressions reachable directly from this Selection
+        obs_exprs: list[str] = []
+        for succ_nid in node_successors.get(sel_nid, []):
+            succ_type = nodes.get(succ_nid)
+            if _is_obs(succ_type):
+                expr = _get_expr(succ_nid, succ_type)
+                if expr:
+                    obs_exprs.append(expr)
 
-    return check_mult_bounds_for_exprs(exprs, eff_lep, eff_jet, eff_phot)
+        if not obs_exprs:
+            continue
+
+        sel_name = REGISTRY.node_names.get(sel_nid) or f"Selection {sel_nid}"
+        for w in check_obs_bounds_for_selection(sel_expr, obs_exprs):
+            warnings.append(f"[{sel_name}] {w}")
+
+    return warnings
 
 
 def mark_nodes_from_pipeline_check(error_nids: list[int], all_nids: list[int]):

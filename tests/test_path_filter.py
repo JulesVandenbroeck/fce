@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from engine.path_filter import (
     _delta_r, _P4Proxy, _ArrayProxy, _delta_r_vec,
     make_cache_acc, save_cache, _CACHE_KEYS, _check_object_availability,
-    check_mult_bounds_for_exprs,
+    _extract_min_count, check_obs_bounds_for_selection,
 )
 
 
@@ -140,55 +140,75 @@ def test_check_object_availability_no_l2_reference():
     assert warnings == []
 
 
-def test_mult_bounds_no_second_objects():
-    """No second-object references → no warnings regardless of counts."""
-    assert check_mult_bounds_for_exprs(["l1.pt > 10", "nlep >= 1"], 0, 0, 0) == []
+def test_extract_min_count_gte():
+    assert _extract_min_count("nlep >= 2 and l1.pt > 10", "nlep") == 2
 
 
-def test_mult_bounds_l2_sufficient():
-    """l2 reference with eff_lep >= 2 → no warning."""
-    assert check_mult_bounds_for_exprs(["l2.pt > 5"], 2, 0, 0) == []
+def test_extract_min_count_gt():
+    assert _extract_min_count("nlep > 1", "nlep") == 2
 
 
-def test_mult_bounds_l2_insufficient():
-    """l2 reference with eff_lep < 2 → warning."""
-    warns = check_mult_bounds_for_exprs(["l2.pt > 5"], 1, 0, 0)
+def test_extract_min_count_eq():
+    assert _extract_min_count("nlep == 3", "nlep") == 3
+
+
+def test_extract_min_count_lhs_lte():
+    assert _extract_min_count("2 <= nlep", "nlep") == 2
+
+
+def test_extract_min_count_lhs_lt():
+    assert _extract_min_count("1 < nlep", "nlep") == 2
+
+
+def test_extract_min_count_no_constraint():
+    assert _extract_min_count("l1.pt > 10", "nlep") == 0
+
+
+def test_extract_min_count_jets():
+    assert _extract_min_count("njets >= 2 and j1.btag > 0.7", "njets") == 2
+
+
+def test_obs_bounds_no_second_objects():
+    """No l2/j2/ph2 in observable → no warnings."""
+    assert check_obs_bounds_for_selection("nlep >= 1", ["l1.pt"]) == []
+
+
+def test_obs_bounds_l2_sufficient():
+    """Selection guarantees nlep >= 2 → no warning for l2 in observable."""
+    assert check_obs_bounds_for_selection("nlep >= 2", ["l2.pt"]) == []
+
+
+def test_obs_bounds_l2_insufficient():
+    """Selection only guarantees 1 lepton → warn when observable uses l2."""
+    warns = check_obs_bounds_for_selection("nlep >= 1", ["l2.pt"])
     assert len(warns) == 1
     assert "l2.*" in warns[0]
     assert "nlep >= 2" in warns[0]
 
 
-def test_mult_bounds_j2_insufficient():
-    """j2 reference with eff_jet < 2 → warning."""
-    warns = check_mult_bounds_for_exprs(["j2.btag > 0.7"], 0, 1, 0)
-    assert len(warns) == 1
-    assert "j2.*" in warns[0]
-
-
-def test_mult_bounds_ph2_insufficient():
-    """ph2 reference with eff_phot == 0 → warning."""
-    warns = check_mult_bounds_for_exprs(["ph2.pt"], 0, 0, 0)
-    assert len(warns) == 1
-    assert "ph2.*" in warns[0]
-
-
-def test_mult_bounds_vecsum_expr():
-    """Vec Sum expression containing l2.p4 triggers warning when eff_lep < 2."""
-    warns = check_mult_bounds_for_exprs(["(l1.p4 + l2.p4).mass"], 1, 0, 0)
+def test_obs_bounds_no_sel_constraint():
+    """Selection with no count constraint → warn when observable uses l2."""
+    warns = check_obs_bounds_for_selection("l1.pt > 10", ["l2.pt"])
     assert len(warns) == 1
     assert "l2.*" in warns[0]
 
 
-def test_mult_bounds_multiple_warnings():
-    """Multiple insufficient objects each produce their own warning."""
-    warns = check_mult_bounds_for_exprs(["l2.pt + j2.pt"], 0, 0, 0)
-    assert len(warns) == 2
-
-
-def test_mult_bounds_leq_operator_warns():
-    """<= operator gives no lower-bound guarantee (eff == 0) → warning."""
-    warns = check_mult_bounds_for_exprs(["l2.pt > 5"], 0, 0, 0)
+def test_obs_bounds_vecsum_l2():
+    """Vec Sum expression (l1.p4 + l2.p4).mass triggers warning."""
+    warns = check_obs_bounds_for_selection("nlep >= 1", ["(l1.p4 + l2.p4).mass"])
     assert len(warns) == 1
+    assert "l2.*" in warns[0]
+
+
+def test_obs_bounds_j2_insufficient():
+    warns = check_obs_bounds_for_selection("njets >= 1", ["j2.btag"])
+    assert len(warns) == 1
+    assert "j2.*" in warns[0]
+
+
+def test_obs_bounds_multiple_warnings():
+    warns = check_obs_bounds_for_selection("l1.pt > 5", ["l2.pt + j2.pt"])
+    assert len(warns) == 2
 
 
 def test_save_cache_and_reload(tmp_path):

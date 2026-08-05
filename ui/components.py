@@ -458,8 +458,8 @@ def trigger_analysis_pipeline(_skip_bounds_check: bool = False):
 
     # Check that Multiplicity minimum counts cover the objects used in expressions
     if not _skip_bounds_check:
-        from ui.graph import check_multiplicity_bounds
-        bounds_warnings = check_multiplicity_bounds()
+        from ui.graph import check_selection_obs_bounds
+        bounds_warnings = check_selection_obs_bounds()
         if bounds_warnings and dpg.does_item_exist("mult_bounds_warn_window"):
             warn_text = "\n\n".join(bounds_warnings)
             dpg.set_value("mult_bounds_warn_text", warn_text)
