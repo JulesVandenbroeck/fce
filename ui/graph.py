@@ -670,7 +670,8 @@ def validate_node_expressions() -> list[tuple[int, str]]:
             errors.append((nid, "Expression is empty."))
             continue
         try:
-            compile(expr, "<expr>", "eval")
+            from engine.path_filter import preprocess_hep_expr
+            compile(preprocess_hep_expr(expr), "<expr>", "eval")
         except SyntaxError as e:
             errors.append((nid, f"Syntax error: {e.msg}\n  {expr}"))
     return errors
