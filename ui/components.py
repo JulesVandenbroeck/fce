@@ -48,6 +48,28 @@ def _discovery_selection_label(res: dict) -> str:
     return ""
 
 
+def _discovery_hint(x_label: str) -> str:
+    """Return a contextual physics hint based on the observable label."""
+    lbl = x_label.lower()
+    if "mass" in lbl:
+        return ("Tip: A narrow mass peak suggests a resonance. Compare the peak\n"
+                "position with known particles: Z boson ~91 GeV, Higgs ~125 GeV.")
+    if "met" in lbl or "missing" in lbl:
+        return ("Tip: Missing transverse energy (MET) signals invisible particles\n"
+                "such as neutrinos or potential dark matter candidates.")
+    if "pt" in lbl or "p_t" in lbl:
+        return ("Tip: pT distributions encode the decay kinematics. A hard endpoint\n"
+                "at M/2 indicates a two-body decay from a particle of mass M.")
+    if "nlep" in lbl or "nel" in lbl or "nmu" in lbl:
+        return ("Tip: Lepton multiplicity distinguishes decay modes. Di-lepton\n"
+                "signatures are typical of Z and Higgs decays.")
+    if "eta" in lbl:
+        return ("Tip: Pseudorapidity (eta) reflects the production angle. Central\n"
+                "particles (|eta| < 2.5) are within the detector acceptance.")
+    return ("Tip: Signal strength mu = 1 means perfect agreement with the\n"
+            "Standard Model prediction. mu > 1 suggests more signal than expected.")
+
+
 def _show_next_discovery() -> None:
     if not _DISCOVERY_QUEUE or not dpg.does_item_exist("discovery_window"):
         if dpg.does_item_exist("discovery_window"):
@@ -61,7 +83,7 @@ def _show_next_discovery() -> None:
 
     detail_lines = [f"Observable: {x_label}"]
     if sel_label:
-        detail_lines.append(f"Selection: {sel_label}")
+        detail_lines.append(f"Selection:  {sel_label}")
     detail_lines.append(f"Signal strength (mu): {res['mu']}")
 
     if dpg.does_item_exist("discovery_title_text"):
@@ -70,12 +92,14 @@ def _show_next_discovery() -> None:
                       f"{res['sig']} sigma significance.")
     if dpg.does_item_exist("discovery_detail_text"):
         dpg.set_value("discovery_detail_text", "\n".join(detail_lines))
+    if dpg.does_item_exist("discovery_hint_text"):
+        dpg.set_value("discovery_hint_text", _discovery_hint(x_label))
     if dpg.does_item_exist("discovery_process_name_input"):
         dpg.set_value("discovery_process_name_input",
                       _NAMED_PROCESSES.get(pidx, ""))
     vp_w = dpg.get_viewport_width()
     vp_h = dpg.get_viewport_height()
-    dpg.set_item_pos("discovery_window", [(vp_w - 420) // 2, (vp_h - 230) // 2])
+    dpg.set_item_pos("discovery_window", [(vp_w - 460) // 2, (vp_h - 320) // 2])
     dpg.configure_item("discovery_window", show=True)
     dpg.focus_item("discovery_window")
 
