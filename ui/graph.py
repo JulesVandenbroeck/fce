@@ -467,6 +467,8 @@ def _on_key_undo(sender=None, app_data=None, user_data=None):
     if not (dpg.is_key_down(dpg.mvKey_LControl) or dpg.is_key_down(dpg.mvKey_RControl)):
         return
     if _any_input_active():
+        from ui.components import log_to_message_center
+        log_to_message_center("Undo unavailable while editing — press Enter or click away first.")
         return
     undo_last()
 
@@ -1159,6 +1161,16 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
         )
 
     elif node_type == "Multiplicity":
+        _mult_info_tag = f"mult_info_{nid}"
+        dpg.add_text("Multiplicity: hover for info", tag=_mult_info_tag,
+                     color=(140, 140, 140, 180), parent=parent_tag)
+        with dpg.tooltip(parent=_mult_info_tag):
+            dpg.add_text(
+                "Multiplicity = the number of reconstructed\n"
+                "particles of each type in a collision event.\n\n"
+                "Set the minimum count per type that the\n"
+                "analysis requires. Use 0 for no requirement.",
+            )
         dpg.add_combo(
             ["Any", "Electron", "Muon"],
             label="Lepton", tag=f"cb_ltype_{nid}",
