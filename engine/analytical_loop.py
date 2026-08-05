@@ -291,10 +291,13 @@ def run_physics_loop(cfg, samples, active_samples, en):
         )
 
         if sel_nid is not None:
+            prefix_nids = set(sel_cfg.get("prefix_nids", [sel_nid]))
             if all_cached:
-                add_completed_node(sel_nid)
+                for _pnid in prefix_nids:
+                    add_completed_node(_pnid)
             else:
-                add_active_node(sel_nid)
+                for _pnid in prefix_nids:
+                    add_active_node(_pnid)
                 update_run_state("current_phase",
                                  f"Processing: {sel_name}" if sel_name else "Filtering events...")
 
@@ -323,7 +326,8 @@ def run_physics_loop(cfg, samples, active_samples, en):
 
         # Mark this selection and all its observable/histogram nodes as done
         if sel_nid is not None:
-            nids_to_complete = {sel_nid}
+            prefix_nids = set(sel_cfg.get("prefix_nids", [sel_nid]))
+            nids_to_complete = set(prefix_nids)
             for hcfg in sel_cfg.get("histograms", []):
                 if hcfg.get("obs_nid") is not None:
                     nids_to_complete.add(hcfg["obs_nid"])

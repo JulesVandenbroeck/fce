@@ -428,7 +428,8 @@ def trigger_analysis_pipeline():
                 os.path.exists(os.path.join(_hdir, "cache", f"sel_{_h5}_{_s}.npz"))
                 for _s in _active
             ):
-                _cached_sel_nids.add(_nid)
+                for _pnid in _sel.get("prefix_nids", [_nid]):
+                    _cached_sel_nids.add(_pnid)
     except Exception:
         pass
 
