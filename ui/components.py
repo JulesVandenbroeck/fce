@@ -26,6 +26,9 @@ _DISCOVERED_PIDS: set[int] = set()
 _DISCOVERY_QUEUE: list = []
 # Which plot_idx the currently open discovery popup refers to
 _CURRENT_DISCOVERY_PIDX: list[int | None] = [None]
+# Last cfg and display params from a successful run (for post-discovery re-render)
+_LAST_CFG: dict | None = None
+_LAST_DISPLAY_PARAMS: dict | None = None
 
 
 def _simplify_obs_label(label: str) -> str:
@@ -48,6 +51,28 @@ def _discovery_selection_label(res: dict) -> str:
     return ""
 
 
+def _discovery_hint(x_label: str) -> str:
+    """Return a contextual physics hint based on the observable label."""
+    lbl = x_label.lower()
+    if "mass" in lbl:
+        return ("Tip: A narrow mass peak suggests a resonance. Compare the peak\n"
+                "position with known particles: Z boson ~91 GeV, Higgs ~125 GeV.")
+    if "met" in lbl or "missing" in lbl:
+        return ("Tip: Missing transverse energy (MET) signals invisible particles\n"
+                "such as neutrinos or potential dark matter candidates.")
+    if "pt" in lbl or "p_t" in lbl:
+        return ("Tip: pT distributions encode the decay kinematics. A hard endpoint\n"
+                "at M/2 indicates a two-body decay from a particle of mass M.")
+    if "nlep" in lbl or "nel" in lbl or "nmu" in lbl:
+        return ("Tip: Lepton multiplicity distinguishes decay modes. Di-lepton\n"
+                "signatures are typical of Z and Higgs decays.")
+    if "eta" in lbl:
+        return ("Tip: Pseudorapidity (eta) reflects the production angle. Central\n"
+                "particles (|eta| < 2.5) are within the detector acceptance.")
+    return ("Tip: Signal strength mu = 1 means perfect agreement with the\n"
+            "Standard Model prediction. mu > 1 suggests more signal than expected.")
+
+
 def _show_next_discovery() -> None:
     if not _DISCOVERY_QUEUE or not dpg.does_item_exist("discovery_window"):
         if dpg.does_item_exist("discovery_window"):
@@ -61,7 +86,7 @@ def _show_next_discovery() -> None:
 
     detail_lines = [f"Observable: {x_label}"]
     if sel_label:
-        detail_lines.append(f"Selection: {sel_label}")
+        detail_lines.append(f"Selection:  {sel_label}")
     detail_lines.append(f"Signal strength (mu): {res['mu']}")
 
     if dpg.does_item_exist("discovery_title_text"):
@@ -70,14 +95,71 @@ def _show_next_discovery() -> None:
                       f"{res['sig']} sigma significance.")
     if dpg.does_item_exist("discovery_detail_text"):
         dpg.set_value("discovery_detail_text", "\n".join(detail_lines))
+    if dpg.does_item_exist("discovery_hint_text"):
+        dpg.set_value("discovery_hint_text", _discovery_hint(x_label))
     if dpg.does_item_exist("discovery_process_name_input"):
         dpg.set_value("discovery_process_name_input",
                       _NAMED_PROCESSES.get(pidx, ""))
     vp_w = dpg.get_viewport_width()
     vp_h = dpg.get_viewport_height()
-    dpg.set_item_pos("discovery_window", [(vp_w - 420) // 2, (vp_h - 230) // 2])
+    dpg.set_item_pos("discovery_window", [(vp_w - 460) // 2, (vp_h - 320) // 2])
     dpg.configure_item("discovery_window", show=True)
     dpg.focus_item("discovery_window")
+
+
+def _rerender_after_discovery() -> None:
+    """Re-render plot PNGs with updated process names, then refresh the UI canvas."""
+    import copy as _copy
+    import json as _json
+    from engine.plotter import render_plots
+
+    cfg = _LAST_CFG
+    if cfg is None:
+        return
+
+    cfg_copy = _copy.deepcopy(cfg)
+    _all_hcfgs = list(cfg_copy.get("histograms", []))
+    for _sel in cfg_copy.get("selections", []):
+        _all_hcfgs.extend(_sel.get("histograms", []))
+
+    _proc_map: dict[str, str] = {}
+    for _hcfg in _all_hcfgs:
+        _pidx = _hcfg.get("plot_idx", 0)
+        _tgt  = _hcfg.get("target", "")
+        if _tgt and _pidx in _NAMED_PROCESSES:
+            _proc_map[_tgt] = _NAMED_PROCESSES[_pidx]
+        if _pidx in _NAMED_PROCESSES:
+            _hcfg["process_name"] = _NAMED_PROCESSES[_pidx]
+        else:
+            _hcfg.pop("process_name", None)
+    for _hcfg in _all_hcfgs:
+        if _proc_map:
+            _hcfg["process_names_map"] = _proc_map
+        else:
+            _hcfg.pop("process_names_map", None)
+
+    try:
+        _config_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "config", "samples.json"
+        )
+        with open(_config_path) as _f:
+            _samples = _json.load(_f)
+        _en = cfg_copy["energy"].replace(" GeV", "")
+        render_plots(cfg_copy, _samples, _en)
+    except Exception:
+        return
+
+    _fit_results = safe_get_state("fit_results") or {}
+    _disp = _LAST_DISPLAY_PARAMS or {}
+    dpg.set_frame_callback(
+        dpg.get_frame_count() + 1,
+        lambda: refresh_ui_canvas(
+            selections_info=_disp.get("selections_info"),
+            n_histograms=_disp.get("n_hist", 1),
+            hist_labels=_disp.get("hist_labels"),
+            fit_results=_fit_results,
+        ),
+    )
 
 
 def save_discovery_process_name(name: str) -> None:
@@ -88,6 +170,8 @@ def save_discovery_process_name(name: str) -> None:
         _DISCOVERED_PIDS.add(pidx)
         _CURRENT_DISCOVERY_PIDX[0] = None
     _show_next_discovery()
+    if not _DISCOVERY_QUEUE and _LAST_CFG is not None:
+        threading.Thread(target=_rerender_after_discovery, daemon=True).start()
 
 
 def log_to_message_center(message_text):
@@ -506,6 +590,15 @@ def trigger_analysis_pipeline():
     dpg.configure_item("btn_trigger", label="Stop (Processing..)", enabled=True)
     if dpg.does_item_exist("run_btn_running_theme"):
         dpg.bind_item_theme("btn_trigger", "run_btn_running_theme")
+
+    global _LAST_CFG, _LAST_DISPLAY_PARAMS
+    import copy as _copy
+    _LAST_CFG = _copy.deepcopy(cfg)
+    _LAST_DISPLAY_PARAMS = {
+        "selections_info": getattr(_frame_poll_callback, "_last_selections_info", None),
+        "n_hist":          getattr(_frame_poll_callback, "_last_n_hist", 1),
+        "hist_labels":     getattr(_frame_poll_callback, "_last_hist_labels", None),
+    }
 
     CURRENT_WORKER = threading.Thread(target=execute_analysis, args=(cfg, None), daemon=True)
     CURRENT_WORKER.start()

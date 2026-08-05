@@ -9,13 +9,14 @@ from ui.state import REGISTRY, NODE_LABELS
 # ---------------------------------------------------------------------------
 SEL_ALL_VARS = [
     "nlep", "nel", "nmu", "njets", "nphot",
-    "l1.pt", "l1.eta", "l1.phi", "l1.e", "l1.d0", "l1.z0", "l1.p4",
-    "l2.pt", "l2.eta", "l2.phi", "l2.e", "l2.d0", "l2.z0", "l2.p4",
+    "l1.pt", "l1.eta", "l1.phi", "l1.e", "l1.d0", "l1.z0", "l1.charge", "l1.flavour", "l1.p4",
+    "l2.pt", "l2.eta", "l2.phi", "l2.e", "l2.d0", "l2.z0", "l2.charge", "l2.flavour", "l2.p4",
     "j1.pt", "j1.eta", "j1.phi", "j1.e", "j1.btag", "j1.p4",
     "j2.pt", "j2.eta", "j2.phi", "j2.e", "j2.btag", "j2.p4",
     "ph1.pt", "ph1.eta", "ph1.phi", "ph1.e", "ph1.p4",
     "ph2.pt", "ph2.eta", "ph2.phi", "ph2.e", "ph2.p4",
-    "met.pt", "met.eta", "met.phi", "met.e", "met.p4",
+    "met.pt", "met.phi",
+    "mT(l1, met)", "mT(l2, met)",
 ]
 
 _SEL_MAX_SUGS = 5
@@ -40,7 +41,7 @@ _OBJ_VARS = {
     "j2":  ["pt", "eta", "phi", "e", "btag"],
     "ph1": ["pt", "eta", "phi", "e"],
     "ph2": ["pt", "eta", "phi", "e"],
-    "met": ["pt", "eta", "phi", "e"],
+    "met": ["pt", "phi"],
 }
 
 _VEC_RESULT_VARS = ["mass", "pt", "eta", "phi", "e"]
@@ -354,6 +355,7 @@ _UNDO_HISTORY: deque = deque(maxlen=10)
 _WIDGET_PREFIXES = (
     "cb_energy_", "cb_detector_",
     "cb_ltype_", "txt_leptons_", "txt_jets_", "txt_photons_",
+    "cb_op_lep_", "cb_op_jet_", "cb_op_phot_",
     "txt_sel_", "txt_obs_", "obs_expr_",
     "cb_target_", "txt_bins_", "txt_range_min_", "txt_range_max_",
 )
@@ -1043,12 +1045,27 @@ def _obs_rebuild_object_rows(nid: int, pairs: list):
             callback=lambda s, a, u: _obs_obj_change(u[0], u[1], a),
             user_data=(nid, i), parent=row,
         )
+        var_combo_tag = f"obs_o_var_{nid}_{i}"
         dpg.add_combo(
             valid_vars, default_value=var,
-            tag=f"obs_o_var_{nid}_{i}", width=60,
+            tag=var_combo_tag, width=60,
             callback=lambda s, a, u: _build_obs_expr(u, "ObsObject"),
             user_data=nid, parent=row,
         )
+        with dpg.tooltip(parent=var_combo_tag):
+            dpg.add_text(
+                "Variable options for the selected object:\n\n"
+                "  pt   - transverse momentum [GeV]\n"
+                "  eta  - pseudorapidity\n"
+                "  phi  - azimuthal angle [rad]\n"
+                "  e    - energy [GeV]\n"
+                "  d0   - transverse impact parameter (leptons)\n"
+                "  z0   - longitudinal impact parameter (leptons)\n"
+                "  btag - b-tagging discriminant [0, 1] (jets only)\n"
+                "         Values near 1 indicate a b-jet.\n"
+                "         Typical working point: btag > 0.7\n"
+                "         (~70% b-jet efficiency, ~1% light-jet rate)"
+            )
         if i < n - 1:
             dpg.add_text("+", parent=row)
         if n > 1:
@@ -1243,26 +1260,30 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
             dpg.add_text(
                 "Multiplicity = the number of reconstructed\n"
                 "particles of each type in a collision event.\n\n"
-                "Set the minimum count per type that the\n"
-                "analysis requires. Use 0 for no requirement.",
+                "Set the count threshold and comparison operator\n"
+                "for each particle type (0 = no requirement).",
             )
         dpg.add_combo(
             ["Any", "Electron", "Muon"],
             label="Lepton", tag=f"cb_ltype_{nid}",
             default_value="Any", width=90, parent=parent_tag,
         )
-        dpg.add_input_int(
-            label="Min Leptons", tag=f"txt_leptons_{nid}",
-            default_value=0, width=90, parent=parent_tag,
-        )
-        dpg.add_input_int(
-            label="Min Jets", tag=f"txt_jets_{nid}",
-            default_value=0, width=90, parent=parent_tag,
-        )
-        dpg.add_input_int(
-            label="Min Photons", tag=f"txt_photons_{nid}",
-            default_value=0, width=90, parent=parent_tag,
-        )
+        _ops = [">=", "==", "<="]
+        with dpg.group(horizontal=True, parent=parent_tag):
+            dpg.add_combo(_ops, tag=f"cb_op_lep_{nid}",
+                          default_value=">=", width=45)
+            dpg.add_input_int(label="Leptons", tag=f"txt_leptons_{nid}",
+                              default_value=0, width=60)
+        with dpg.group(horizontal=True, parent=parent_tag):
+            dpg.add_combo(_ops, tag=f"cb_op_jet_{nid}",
+                          default_value=">=", width=45)
+            dpg.add_input_int(label="Jets", tag=f"txt_jets_{nid}",
+                              default_value=0, width=60)
+        with dpg.group(horizontal=True, parent=parent_tag):
+            dpg.add_combo(_ops, tag=f"cb_op_phot_{nid}",
+                          default_value=">=", width=45)
+            dpg.add_input_int(label="Photons", tag=f"txt_photons_{nid}",
+                              default_value=0, width=60)
 
     elif node_type == "Selection":
         _make_expr_widgets(
@@ -1713,7 +1734,10 @@ def compile_graph_topology() -> dict:
         njets = int(dpg.get_value(f"txt_jets_{n}"))
         ltype = dpg.get_value(f"cb_ltype_{n}") if dpg.does_item_exist(f"cb_ltype_{n}") else "Any"
         nphot = int(dpg.get_value(f"txt_photons_{n}")) if dpg.does_item_exist(f"txt_photons_{n}") else 0
-        mult_cuts.append((nlep, njets, ltype, nphot))
+        op_lep  = dpg.get_value(f"cb_op_lep_{n}") if dpg.does_item_exist(f"cb_op_lep_{n}") else ">="
+        op_jet  = dpg.get_value(f"cb_op_jet_{n}") if dpg.does_item_exist(f"cb_op_jet_{n}") else ">="
+        op_phot = dpg.get_value(f"cb_op_phot_{n}") if dpg.does_item_exist(f"cb_op_phot_{n}") else ">="
+        mult_cuts.append((nlep, op_lep, njets, op_jet, ltype, nphot, op_phot))
 
     # Build per-node successor/predecessor maps from all links
     node_successors   = {}  # nid -> [nid, ...]
