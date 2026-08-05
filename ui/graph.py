@@ -1429,18 +1429,70 @@ def create_node(node_type: str, pos: list | None = None, name: str | None = None
 def on_node_editor_drop(sender, app_data, user_data):
     """Create a node at the drop position using screen-to-pane coordinate mapping.
 
-    dpg.get_item_pos reads state['pos'] which for child_window items returns
-    the screen-space position (unlike rect_min, which is only populated for
-    non-container ImGui items).
+    get_item_pos for child_window items returns a position relative to the
+    viewport, not the screen. get_mouse_pos(local=False) is in screen space.
+    We subtract both the viewport origin and the pane's viewport-relative pos
+    to get the correct canvas coordinate regardless of where the window sits.
     """
     node_type = app_data
     if not node_type or not isinstance(node_type, str):
         return
     screen = dpg.get_mouse_pos(local=False)
+    vp_pos = dpg.get_viewport_pos()
     origin = dpg.get_item_pos("node_editor_pane")
-    x = max(10, int(screen[0] - origin[0]))
-    y = max(10, int(screen[1] - origin[1]))
+    x = max(10, int(screen[0] - vp_pos[0] - origin[0]))
+    y = max(10, int(screen[1] - vp_pos[1] - origin[1]))
     create_node(node_type, pos=[x, y])
+
+
+def create_node_below_lowest(node_type: str):
+    """Create a node below the lowest existing node of the same type.
+
+    Used by palette click callbacks. Falls back to a default position when no
+    node of the given type exists yet.
+    """
+    _TYPE_GROUPS = {
+        "ObsGlobal": _OBS_TYPES,
+        "ObsObject": _OBS_TYPES,
+        "ObsVectorSum": _OBS_TYPES,
+        "ObsCustom": _OBS_TYPES,
+        "Observable": _OBS_TYPES,
+    }
+    match_types = _TYPE_GROUPS.get(node_type, {node_type})
+
+    best_x, best_y = 100, 100
+    found = False
+    for nid, ntype in REGISTRY.nodes.items():
+        if ntype not in match_types:
+            continue
+        tag = f"node_{nid}"
+        if not dpg.does_item_exist(tag):
+            continue
+        nx, ny = dpg.get_item_pos(tag)
+        if not found or ny > best_y:
+            best_x, best_y = nx, ny
+            found = True
+
+    create_node(node_type, pos=[best_x, best_y + 250 if found else 100])
+
+
+def delete_unconnected_nodes():
+    """Delete all nodes that have no links (neither input nor output)."""
+    linked_nids: set = set()
+    for _lid, (start_slot, end_slot) in REGISTRY.links.items():
+        s_nid = REGISTRY.slot_node.get(start_slot)
+        e_nid = REGISTRY.slot_node.get(end_slot)
+        if s_nid is not None:
+            linked_nids.add(s_nid)
+        if e_nid is not None:
+            linked_nids.add(e_nid)
+
+    to_delete = [
+        nid for nid, ntype in list(REGISTRY.nodes.items())
+        if nid not in linked_nids and ntype != "DataSource"
+    ]
+    for nid in to_delete:
+        delete_node(nid, _push_undo=False)
 
 
 # ---------------------------------------------------------------------------

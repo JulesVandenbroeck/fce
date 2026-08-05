@@ -20,7 +20,8 @@ from PIL import Image
 
 from ui.graph import (link_callback, delink_callback, create_node,
                       setup_link_handlers, on_node_editor_drop,
-                      save_pipeline, load_pipeline)
+                      save_pipeline, load_pipeline,
+                      create_node_below_lowest, delete_unconnected_nodes)
 from ui.state import REGISTRY
 from ui.components import (trigger_analysis_pipeline, trigger_dataset_download,
                            confirm_redownload, MAX_HIST_TEXTURES,
@@ -449,11 +450,13 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
             dpg.add_spacer(width=8)
             with dpg.group(horizontal=False):
                 dpg.add_spacer(height=15)
-                dpg.add_text("Drag to canvas ›")
+                dpg.add_text("Click or drag ›")
             dpg.add_spacer(width=12)
             for _pt, _plabel in [("Multiplicity", "Multiplicity"),
                                   ("Selection",    "Selection")]:
-                _pbtn = dpg.add_button(label=_plabel, width=160, height=44)
+                _pbtn = dpg.add_button(label=_plabel, width=160, height=44,
+                                       callback=lambda s, a, u: create_node_below_lowest(u),
+                                       user_data=_pt)
                 with dpg.drag_payload(parent=_pbtn, drag_data=_pt,
                                       label=f"  + {_plabel}  "):
                     pass
@@ -462,10 +465,15 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
             dpg.add_button(label="Observable", width=160, height=44,
                            callback=_show_obs_submenu)
             dpg.add_spacer(width=8)
-            _pbtn = dpg.add_button(label="Histogram", width=160, height=44)
+            _pbtn = dpg.add_button(label="Histogram", width=160, height=44,
+                                   callback=lambda s, a, u: create_node_below_lowest(u),
+                                   user_data="Histogram")
             with dpg.drag_payload(parent=_pbtn, drag_data="Histogram",
                                   label="  + Histogram  "):
                 pass
+            dpg.add_spacer(width=8)
+            dpg.add_button(label="Delete Unconnected", width=170, height=44,
+                           callback=lambda: delete_unconnected_nodes())
             dpg.add_spacer(width=8)
 
         # ── Observable submenu view (hidden until Observable is clicked) ──
@@ -478,7 +486,9 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                               ("ObsObject",    "Object"),
                               ("ObsVectorSum", "Vec Sum"),
                               ("ObsCustom",    "Custom")]:
-                _pb = dpg.add_button(label=_pl, width=130, height=44)
+                _pb = dpg.add_button(label=_pl, width=130, height=44,
+                                     callback=lambda s, a, u: create_node_below_lowest(u),
+                                     user_data=_pt)
                 with dpg.drag_payload(parent=_pb, drag_data=_pt,
                                       label=f"  + {_pl}  "):
                     pass
