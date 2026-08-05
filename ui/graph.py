@@ -137,6 +137,26 @@ def _nid_from_slot(slot_id) -> int | None:
 
 _CHAINABLE_TYPES = {"Multiplicity", "Selection"}
 
+# Theme for Selection→Selection AND-chain links (created on first use).
+_AND_LINK_THEME: list[int | None] = [None]
+
+
+def _get_and_link_theme() -> int:
+    """Return (creating if necessary) a blue theme for AND-chained Selection links."""
+    if _AND_LINK_THEME[0] is None:
+        tid = dpg.generate_uuid()
+        with dpg.theme(tag=tid):
+            with dpg.theme_component(dpg.mvNodeLink):
+                dpg.add_theme_color(dpg.mvNodeCol_Link,
+                                    (80, 140, 240, 255), category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_LinkHovered,
+                                    (110, 170, 255, 255), category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_LinkSelected,
+                                    (150, 200, 255, 255), category=dpg.mvThemeCat_Nodes)
+        _AND_LINK_THEME[0] = tid
+    return _AND_LINK_THEME[0]
+
+
 # Explicit allowlist of valid src → dst connections.
 # Observable subtypes are grouped together on the destination side.
 _OBS_TYPES_SET = {"Observable", "ObsGlobal", "ObsObject", "ObsVectorSum", "ObsCustom"}
@@ -210,6 +230,14 @@ def link_callback(sender, app_data):
     link_id = dpg.add_node_link(start_slot, end_slot, parent=sender)
     REGISTRY.links[link_id] = (start_slot, end_slot)
     REGISTRY.connections[start_slot] = end_slot
+    # Colour Selection→Selection (AND-chain) links in blue for visual distinction.
+    if (start_nid is not None and end_nid is not None
+            and REGISTRY.nodes.get(start_nid) == "Selection"
+            and REGISTRY.nodes.get(end_nid) == "Selection"):
+        try:
+            dpg.bind_item_theme(link_id, _get_and_link_theme())
+        except Exception:
+            pass
 
 
 def delink_callback(sender, app_data):
@@ -399,6 +427,9 @@ def _restore_link(snap: dict):
         lid = dpg.add_node_link(start_slot, end_slot, parent="node_editor_container")
         REGISTRY.links[lid] = (start_slot, end_slot)
         REGISTRY.connections[start_slot] = end_slot
+        if (REGISTRY.nodes.get(src_nid) == "Selection"
+                and REGISTRY.nodes.get(dst_nid) == "Selection"):
+            dpg.bind_item_theme(lid, _get_and_link_theme())
     except Exception:
         pass
 
@@ -468,6 +499,8 @@ def _on_key_undo(sender=None, app_data=None, user_data=None):
     if not (dpg.is_key_down(dpg.mvKey_LControl) or dpg.is_key_down(dpg.mvKey_RControl)):
         return
     if _any_input_active():
+        from ui.components import log_to_message_center
+        log_to_message_center("Undo unavailable while editing — press Enter or click away first.")
         return
     undo_last()
 
@@ -608,7 +641,7 @@ def _set_node_active(nid: int):
 
 
 def _set_node_aborted(nid: int):
-    """Apply a red theme to indicate the node was processing when the run was stopped."""
+    """Apply a dark-orange theme to indicate the node was interrupted when the run stopped."""
     node_tag = f"node_{nid}"
     if not dpg.does_item_exist(node_tag):
         return
@@ -617,13 +650,13 @@ def _set_node_aborted(nid: int):
     with dpg.theme(tag=theme_id):
         with dpg.theme_component(dpg.mvNode):
             dpg.add_theme_color(dpg.mvNodeCol_NodeBackground,
-                                (75, 15, 15), category=dpg.mvThemeCat_Nodes)
+                                (70, 40, 5), category=dpg.mvThemeCat_Nodes)
             dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered,
-                                (95, 20, 20), category=dpg.mvThemeCat_Nodes)
+                                (90, 55, 8), category=dpg.mvThemeCat_Nodes)
             dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected,
-                                (95, 20, 20), category=dpg.mvThemeCat_Nodes)
+                                (90, 55, 8), category=dpg.mvThemeCat_Nodes)
             dpg.add_theme_color(dpg.mvNodeCol_NodeOutline,
-                                (210, 50, 50), category=dpg.mvThemeCat_Nodes)
+                                (200, 110, 20), category=dpg.mvThemeCat_Nodes)
     dpg.bind_item_theme(node_tag, theme_id)
     _NODE_RUNTIME_THEME_IDS[nid] = theme_id
     _NODE_RUNTIME_STATES[nid] = "aborted"
@@ -649,6 +682,28 @@ def _set_node_done(nid: int):
     dpg.bind_item_theme(node_tag, theme_id)
     _NODE_RUNTIME_THEME_IDS[nid] = theme_id
     _NODE_RUNTIME_STATES[nid] = "done"
+
+
+def _set_node_cached(nid: int):
+    """Apply a teal/cyan theme to indicate the node result was loaded from cache."""
+    node_tag = f"node_{nid}"
+    if not dpg.does_item_exist(node_tag):
+        return
+    _delete_runtime_theme(nid)
+    theme_id = dpg.generate_uuid()
+    with dpg.theme(tag=theme_id):
+        with dpg.theme_component(dpg.mvNode):
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackground,
+                                (8, 58, 65), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered,
+                                (12, 74, 84), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected,
+                                (12, 74, 84), category=dpg.mvThemeCat_Nodes)
+            dpg.add_theme_color(dpg.mvNodeCol_NodeOutline,
+                                (30, 190, 210), category=dpg.mvThemeCat_Nodes)
+    dpg.bind_item_theme(node_tag, theme_id)
+    _NODE_RUNTIME_THEME_IDS[nid] = theme_id
+    _NODE_RUNTIME_STATES[nid] = "cached"
 
 
 def _clear_node_runtime_theme(nid: int):
@@ -1160,6 +1215,16 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
         )
 
     elif node_type == "Multiplicity":
+        _mult_info_tag = f"mult_info_{nid}"
+        dpg.add_text("Multiplicity: hover for info", tag=_mult_info_tag,
+                     color=(140, 140, 140, 180), parent=parent_tag)
+        with dpg.tooltip(parent=_mult_info_tag):
+            dpg.add_text(
+                "Multiplicity = the number of reconstructed\n"
+                "particles of each type in a collision event.\n\n"
+                "Set the minimum count per type that the\n"
+                "analysis requires. Use 0 for no requirement.",
+            )
         dpg.add_combo(
             ["Any", "Electron", "Muon"],
             label="Lepton", tag=f"cb_ltype_{nid}",
@@ -1535,25 +1600,53 @@ def create_node_below_lowest(node_type: str):
     create_node(node_type, pos=[best_x, best_bottom + 50 if found else 100])
 
 
+def _unconnected_nids() -> list[int]:
+    """Return node IDs that have no links (DataSource excluded)."""
+    linked: set = set()
+    for _lid, (start_slot, end_slot) in REGISTRY.links.items():
+        s = REGISTRY.slot_node.get(start_slot)
+        e = REGISTRY.slot_node.get(end_slot)
+        if s is not None:
+            linked.add(s)
+        if e is not None:
+            linked.add(e)
+    return [
+        nid for nid, ntype in list(REGISTRY.nodes.items())
+        if nid not in linked and ntype != "DataSource"
+    ]
+
+
+def show_delete_unconnected_confirm():
+    """Show a confirmation dialog listing the nodes that would be deleted."""
+    to_delete = _unconnected_nids()
+    if not to_delete:
+        from ui.components import log_to_message_center
+        log_to_message_center("No unconnected nodes to delete.")
+        return
+    names = []
+    for nid in to_delete:
+        name = REGISTRY.node_names.get(nid, "").strip()
+        label = NODE_LABELS.get(REGISTRY.nodes.get(nid, ""), "?")
+        names.append(f'  {label}: "{name}"' if name else f"  {label}")
+    body = f"Delete {len(to_delete)} unconnected node(s)?\n\n" + "\n".join(names)
+    if dpg.does_item_exist("delete_unconnected_confirm_text"):
+        dpg.set_value("delete_unconnected_confirm_text", body)
+    if dpg.does_item_exist("delete_unconnected_confirm_window"):
+        vp_w = dpg.get_viewport_width()
+        vp_h = dpg.get_viewport_height()
+        dpg.set_item_pos("delete_unconnected_confirm_window",
+                         [(vp_w - 400) // 2, (vp_h - 160) // 2])
+        dpg.configure_item("delete_unconnected_confirm_window", show=True)
+        dpg.focus_item("delete_unconnected_confirm_window")
+
+
 def delete_unconnected_nodes():
     """Delete all unconnected nodes, storing a single batch undo entry.
 
     A single Ctrl+Z restores all nodes that were removed in one call.
     DataSource nodes are never deleted.
     """
-    linked_nids: set = set()
-    for _lid, (start_slot, end_slot) in REGISTRY.links.items():
-        s_nid = REGISTRY.slot_node.get(start_slot)
-        e_nid = REGISTRY.slot_node.get(end_slot)
-        if s_nid is not None:
-            linked_nids.add(s_nid)
-        if e_nid is not None:
-            linked_nids.add(e_nid)
-
-    to_delete = [
-        nid for nid, ntype in list(REGISTRY.nodes.items())
-        if nid not in linked_nids and ntype != "DataSource"
-    ]
+    to_delete = _unconnected_nids()
     if not to_delete:
         return
 

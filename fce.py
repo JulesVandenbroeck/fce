@@ -21,7 +21,8 @@ from PIL import Image
 from ui.graph import (link_callback, delink_callback, create_node,
                       setup_link_handlers, on_node_editor_drop,
                       save_pipeline, load_pipeline,
-                      create_node_below_lowest, delete_unconnected_nodes)
+                      create_node_below_lowest, delete_unconnected_nodes,
+                      show_delete_unconnected_confirm)
 from ui.state import REGISTRY
 from ui.components import (trigger_analysis_pipeline, trigger_dataset_download,
                            confirm_redownload, MAX_HIST_TEXTURES,
@@ -125,6 +126,9 @@ with dpg.window(tag="help_expr_window", label="Expression Guide",
         "  Photons:  ph1.pt  ph1.eta  ph1.phi  ph1.e  ph1.p4\n"
         "            ph2.pt  ph2.eta  ph2.phi  ph2.e  ph2.p4\n\n"
         "  MET    :  met.pt  met.phi  (eta/e/p4 are not defined for MET)\n\n"
+        "  Note: at most 2 objects per type are accessible (l1/l2, j1/j2,\n"
+        "  ph1/ph2). Objects are pT-sorted; accessing l2 when only one\n"
+        "  lepton is present may yield undefined results.\n\n"
         "4-vector arithmetic (p4 objects)\n\n"
         "  (l1.p4 + l2.p4).mass   ->  invariant mass\n"
         "  (l1.p4 + l2.p4).pt     ->  system pT\n"
@@ -153,6 +157,29 @@ with dpg.window(tag="redownload_confirm_window", label="Confirm Re-download",
         dpg.add_spacer(width=10)
         dpg.add_button(label="Cancel", width=80,
                        callback=lambda: dpg.configure_item("redownload_confirm_window", show=False))
+
+# ── Delete Unconnected confirmation window ────────────────────────────────────
+with dpg.window(tag="delete_unconnected_confirm_window",
+                label="Delete Unconnected Nodes",
+                modal=True, show=False, width=400, height=160, no_resize=True):
+    dpg.add_text("", tag="delete_unconnected_confirm_text", wrap=380)
+    dpg.add_spacer(height=10)
+    with dpg.group(horizontal=True):
+        dpg.add_button(
+            label="Delete",
+            tag="delete_unconnected_yes_btn",
+            callback=lambda: (
+                delete_unconnected_nodes(),
+                dpg.configure_item("delete_unconnected_confirm_window", show=False),
+            ),
+            width=100,
+        )
+        dpg.add_spacer(width=10)
+        dpg.add_button(
+            label="Cancel",
+            width=80,
+            callback=lambda: dpg.configure_item("delete_unconnected_confirm_window", show=False),
+        )
 
 # ── About window ──────────────────────────────────────────────────────────────
 with dpg.window(tag="about_window", label="About",
@@ -188,24 +215,33 @@ with dpg.window(tag="node_error_window", label="Node Error",
 
 # ── Discovery popup ──────────────────────────────────────────────────────────
 with dpg.window(tag="discovery_window", label="*** DISCOVERY ***",
-                modal=True, show=False, width=420, height=230,
+                modal=True, show=False, width=420, height=260,
                 no_resize=True):
     dpg.add_spacer(height=10)
     dpg.add_text("", tag="discovery_title_text", wrap=400)
     dpg.add_spacer(height=6)
     dpg.add_text("", tag="discovery_detail_text", wrap=400)
     dpg.add_spacer(height=10)
-    dpg.add_text("Name this process:")
+    dpg.add_text("Give this process a name (optional):")
     dpg.add_input_text(tag="discovery_process_name_input", width=-1,
-                       hint="e.g. Higgs boson")
+                       hint="e.g. Z boson, Higgs boson, ...")
     dpg.add_spacer(height=10)
-    dpg.add_button(
-        label="Celebrate!",
-        callback=lambda: save_discovery_process_name(
-            dpg.get_value("discovery_process_name_input")
-        ),
-        width=-1, height=32,
-    )
+    with dpg.group(horizontal=True):
+        dpg.add_button(
+            label="Confirm Name",
+            tag="btn_discovery_confirm",
+            callback=lambda: save_discovery_process_name(
+                dpg.get_value("discovery_process_name_input")
+            ),
+            width=-2, height=32,
+        )
+        dpg.add_spacer(width=6)
+        dpg.add_button(
+            label="Skip",
+            tag="btn_discovery_skip",
+            callback=lambda: save_discovery_process_name(""),
+            width=70, height=32,
+        )
 
 
 # ── Window show helpers ───────────────────────────────────────────────────────
@@ -279,7 +315,7 @@ _PALETTE_HELP_TEXT = (
     "  Histogram    -- set bins, range and optional signal for fitting\n\n"
     "DELETE UNCONNECTED (right side) -- removes all nodes that have\n"
     "no connections. The Data node is never deleted.\n\n"
-    "Nodes can also be added via 'Add Node' in the top menu bar."
+    "Nodes can also be added via 'Insert Node' in the top menu bar."
 )
 
 
@@ -356,7 +392,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                                 user_data=(_det, _en),
                             )
 
-        with dpg.menu(label="Add Node"):
+        with dpg.menu(label="Insert Node"):
             dpg.add_menu_item(
                 label="Multiplicity",
                 callback=lambda: create_node("Multiplicity"),
@@ -479,7 +515,20 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                 height=42,
             )
             dpg.add_spacer(height=5)
-            dpg.add_spacer(height=6)
+            # ── Node-state colour legend ───────────────────────────────────
+            with dpg.group(horizontal=True):
+                dpg.add_text("Node states:", color=(155, 155, 155))
+                dpg.add_spacer(width=6)
+                dpg.add_text("[Done]",    color=(48, 195, 70))
+                dpg.add_spacer(width=4)
+                dpg.add_text("[Cached]",  color=(30, 190, 210))
+                dpg.add_spacer(width=4)
+                dpg.add_text("[Active]",  color=(215, 145, 25))
+                dpg.add_spacer(width=4)
+                dpg.add_text("[Stopped]", color=(200, 110, 20))
+                dpg.add_spacer(width=4)
+                dpg.add_text("[Error]",   color=(210, 50, 50))
+            dpg.add_spacer(height=4)
             with dpg.group(tag="plot_display_group"):
                 dpg.add_image(
                     "plot_texture_buffer_0",
@@ -487,17 +536,19 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     width=636,
                     height=454,
                 )
-            with dpg.child_window(
-                tag="console_scroll_container",
-                width=-1,
-                height=-1,    # fills all remaining height
-                border=False,
-            ):
-                dpg.add_text(
-                    tag="ui_console_log",
-                    default_value="Initialized.\n",
-                    wrap=0,
-                )
+            with dpg.collapsing_header(label="Console", default_open=True,
+                                        tag="console_header"):
+                with dpg.child_window(
+                    tag="console_scroll_container",
+                    width=-1,
+                    height=150,
+                    border=False,
+                ):
+                    dpg.add_text(
+                        tag="ui_console_log",
+                        default_value="Initialized.\n",
+                        wrap=0,
+                    )
 
     # ── Node palette (bottom bar) — must be inside the primary window ─────
     # Height 80 px, no_scrollbar prevents any overflow scroll.
@@ -581,7 +632,25 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     dpg.add_spacer(width=8)
                     dpg.add_button(label="Delete Unconnected", width=170, height=44,
                                    tag="btn_delete_unconnected",
-                                   callback=lambda: delete_unconnected_nodes())
+                                   callback=lambda: show_delete_unconnected_confirm())
+
+# ── Run button themes: default (dark) and running (amber) ────────────────────
+with dpg.theme(tag="run_btn_running_theme"):
+    with dpg.theme_component(dpg.mvButton):
+        dpg.add_theme_color(dpg.mvThemeCol_Button,        (140, 80, 0),
+                            category=dpg.mvThemeCat_Core)
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (170, 100, 10),
+                            category=dpg.mvThemeCat_Core)
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (110, 60, 0),
+                            category=dpg.mvThemeCat_Core)
+with dpg.theme(tag="run_btn_default_theme"):
+    with dpg.theme_component(dpg.mvButton):
+        dpg.add_theme_color(dpg.mvThemeCol_Button,        (37, 37, 38),
+                            category=dpg.mvThemeCat_Core)
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (55, 55, 56),
+                            category=dpg.mvThemeCat_Core)
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (26, 26, 27),
+                            category=dpg.mvThemeCat_Core)
 
 # ── Delete Unconnected button dark-red theme ──────────────────────────────────
 with dpg.theme(tag="delete_unconnected_theme"):
