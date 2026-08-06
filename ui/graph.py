@@ -347,6 +347,15 @@ _INPUT_PREFIXES = (
 
 def _any_input_active() -> bool:
     """Return True if any text/number input field is currently being edited."""
+    # The discovery popup is a modal dialog whose process-name field is not
+    # tied to a node; while it is open, backspace/delete must not fall through
+    # to node/link deletion. Block for the whole modal, not just its input.
+    try:
+        if dpg.does_item_exist("discovery_window") and \
+                dpg.is_item_shown("discovery_window"):
+            return True
+    except Exception:
+        pass
     for nid in REGISTRY.nodes:
         for prefix in _INPUT_PREFIXES:
             tag = f"{prefix}{nid}"
@@ -1354,10 +1363,6 @@ def _add_node_widgets(node_type: str, nid: int, parent_tag: str):
         dpg.add_input_float(
             label="Max Range", tag=f"txt_range_max_{nid}",
             default_value=150.0, width=90, parent=parent_tag,
-        )
-        dpg.add_text(
-            "Syst: lumi 2.5%, JEC 1.5%/jet, lep 1%/e 0.5%/mu, btag 2%/bjet",
-            color=(180, 180, 180, 200), parent=parent_tag, wrap=220,
         )
 
 
