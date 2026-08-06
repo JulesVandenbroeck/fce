@@ -109,10 +109,13 @@ def test_save_cache_and_reload(tmp_path):
     acc = make_cache_acc()
     null = _P()
     w_obj = _P(pt=0.0, eta=0.0, phi=0.0, e=0.0)
-    _append_event(acc, 2, 1, 1, 0, 0, null, null, null, null, null, null, w_obj, 1.5)
+    # Signature: (acc, nlep, nel, nmu, njets, nphot, nbjets, l1, l2, j1, j2, ph1, ph2, met, w)
+    # nbjets=1 is inserted after nphot (new column added for b-tagging systematics)
+    _append_event(acc, 2, 1, 1, 0, 0, 1, null, null, null, null, null, null, w_obj, 1.5)
 
     cache_file = str(tmp_path / "test_cache.npz")
     save_cache(cache_file, acc)
     data = np.load(cache_file)
     assert abs(float(data["weight"][0]) - 1.5) < 1e-5
     assert int(data["nlep"][0]) == 2
+    assert int(data["nbjets"][0]) == 1

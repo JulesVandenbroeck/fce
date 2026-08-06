@@ -6,6 +6,7 @@ import numpy as np
 import uproot
 
 from paths import get_fce_home
+from engine.systematics import LUMI_UNC, SYST_SOURCES
 
 hdir = get_fce_home()
 
@@ -24,8 +25,14 @@ def run_fit(cfg, samples, en, hist_idx=0):
         return None, None
 
     signal_vals = None
-    bkg_vals    = None
-    data_obs    = None
+    bkg_vals = None
+    data_obs = None
+
+    # Per-source UP variation accumulators; keyed by source name.
+    sig_up = {src: None for src in SYST_SOURCES}
+    bkg_up = {src: None for src in SYST_SOURCES}
+    # Track which sources have complete templates for both signal and background.
+    src_ok = {src: True for src in SYST_SOURCES}
 
     for s in samples.get(en, {}).keys():
         root_out = os.path.join(hdir, "output", f"hist{hist_idx}_{s}.root")
@@ -36,17 +43,47 @@ def run_fit(cfg, samples, en, hist_idx=0):
                 if "h" not in f:
                     continue
                 v = f["h"].values().tolist()
+
+                # Read available variation templates for this sample.
+                samp_up = {}
+                for src in SYST_SOURCES:
+                    key = f"h_{src}_up"
+                    if key in f:
+                        samp_up[src] = f[key].values().tolist()
+                    else:
+                        samp_up[src] = None
+
             if s == target:
                 signal_vals = v
+                for src in SYST_SOURCES:
+                    if samp_up[src] is not None:
+                        sig_up[src] = samp_up[src]
+                    else:
+                        src_ok[src] = False
             elif s == "data":
                 data_obs = v
             else:
                 bkg_vals = v if bkg_vals is None else [b + vi for b, vi in zip(bkg_vals, v)]
+                for src in SYST_SOURCES:
+                    if samp_up[src] is not None:
+                        if bkg_up[src] is None:
+                            bkg_up[src] = samp_up[src][:]
+                        else:
+                            bkg_up[src] = [a + b for a, b in zip(bkg_up[src], samp_up[src])]
+                    else:
+                        # Missing template for at least one bkg sample — drop this source.
+                        src_ok[src] = False
         except Exception:
             continue
 
     if signal_vals is None:
         return None, None
+
+    # Validate per-source availability: drop sources where bkg template is missing
+    # (signal source was already checked above).
+    for src in SYST_SOURCES:
+        if bkg_up[src] is None and bkg_vals is not None:
+            src_ok[src] = False
 
     # Background-free case: no other MC samples present
     if bkg_vals is None:
@@ -67,26 +104,76 @@ def run_fit(cfg, samples, en, hist_idx=0):
     mask = [b > 0 or s > 0 for b, s in zip(bkg_vals, signal_vals)]
     if not any(mask):
         return None, None
-    signal_vals = [s for s, m in zip(signal_vals, mask) if m]
-    bkg_vals    = [b for b, m in zip(bkg_vals,    mask) if m]
-    data_obs    = [d for d, m in zip(data_obs,    mask) if m]
+    signal_nom = [s for s, m in zip(signal_vals, mask) if m]
+    bkg_nom = [b for b, m in zip(bkg_vals, mask) if m]
+    data_obs = [d for d, m in zip(data_obs, mask) if m]
 
-    if sum(signal_vals) <= 0:
+    # Apply the same mask to variation arrays.
+    for src in SYST_SOURCES:
+        if src_ok[src]:
+            if sig_up[src] is not None:
+                sig_up[src] = [v for v, m in zip(sig_up[src], mask) if m]
+            if bkg_up[src] is not None:
+                bkg_up[src] = [v for v, m in zip(bkg_up[src], mask) if m]
+
+    if sum(signal_nom) <= 0:
         return None, None
 
-    bkg_unc = [max(float(np.sqrt(b)), 0.01) for b in bkg_vals]
+    bkg_unc = [max(float(np.sqrt(b)), 0.01) for b in bkg_nom]
 
     try:
         import pyhf
-        model = pyhf.simplemodels.uncorrelated_background(
-            signal=signal_vals,
-            bkg=bkg_vals,
-            bkg_uncertainty=bkg_unc,
-        )
+
+        # ── Signal modifiers ────────────────────────────────────────────────
+        signal_modifiers = [{"name": "mu", "type": "normfactor", "data": None}]
+        lumi_mod = {
+            "name": "lumi", "type": "normsys",
+            "data": {"hi": 1.0 + LUMI_UNC, "lo": max(0.01, 1.0 - LUMI_UNC)},
+        }
+        signal_modifiers.append(lumi_mod)
+
+        for src in SYST_SOURCES:
+            if src_ok[src] and sig_up[src] is not None:
+                lo_data = [max(2.0 * n - u, 0.0)
+                           for n, u in zip(signal_nom, sig_up[src])]
+                signal_modifiers.append({
+                    "name": src, "type": "histosys",
+                    "data": {"hi_data": sig_up[src], "lo_data": lo_data},
+                })
+
+        # ── Background modifiers ────────────────────────────────────────────
+        bkg_modifiers = [
+            {"name": "bkg_unc", "type": "shapesys", "data": bkg_unc},
+            lumi_mod,
+        ]
+
+        for src in SYST_SOURCES:
+            if src_ok[src] and bkg_up[src] is not None:
+                lo_data = [max(2.0 * n - u, 0.0)
+                           for n, u in zip(bkg_nom, bkg_up[src])]
+                bkg_modifiers.append({
+                    "name": src, "type": "histosys",
+                    "data": {"hi_data": bkg_up[src], "lo_data": lo_data},
+                })
+
+        spec = {
+            "channels": [{"name": "singlechannel", "samples": [
+                {"name": "signal", "data": signal_nom,
+                 "modifiers": signal_modifiers},
+                {"name": "background", "data": bkg_nom,
+                 "modifiers": bkg_modifiers},
+            ]}],
+            "observations": [{"name": "singlechannel", "data": data_obs}],
+            "measurements": [{"name": "Measurement",
+                              "config": {"poi": "mu", "parameters": []}}],
+            "version": "1.0.0",
+        }
+        model = pyhf.Model(spec)
         obs_data = pyhf.tensorlib.astensor(data_obs + model.config.auxdata)
 
         _sink = io.StringIO()
-        with warnings.catch_warnings(), contextlib.redirect_stdout(_sink), contextlib.redirect_stderr(_sink):
+        with warnings.catch_warnings(), contextlib.redirect_stdout(_sink), \
+                contextlib.redirect_stderr(_sink):
             warnings.simplefilter("ignore")
             fit_result = pyhf.infer.mle.fit(obs_data, model)
             mu_fit = float(pyhf.tensorlib.to_numpy(fit_result)[model.config.poi_index])
@@ -106,8 +193,8 @@ def run_fit(cfg, samples, en, hist_idx=0):
 
     except Exception:
         # Fallback: simple counting estimate
-        s_sum = float(np.sum(signal_vals))
-        b_sum = float(np.sum(bkg_vals))
+        s_sum = float(np.sum(signal_nom))
+        b_sum = float(np.sum(bkg_nom))
         n_sum = float(np.sum(data_obs))
         mu_est = (n_sum - b_sum) / max(s_sum, 1e-6)
         if b_sum <= 0:

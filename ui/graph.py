@@ -347,6 +347,15 @@ _INPUT_PREFIXES = (
 
 def _any_input_active() -> bool:
     """Return True if any text/number input field is currently being edited."""
+    # The discovery popup is a modal dialog whose process-name field is not
+    # tied to a node; while it is open, backspace/delete must not fall through
+    # to node/link deletion. Block for the whole modal, not just its input.
+    try:
+        if dpg.does_item_exist("discovery_window") and \
+                dpg.is_item_shown("discovery_window"):
+            return True
+    except Exception:
+        pass
     for nid in REGISTRY.nodes:
         for prefix in _INPUT_PREFIXES:
             tag = f"{prefix}{nid}"

@@ -3,6 +3,7 @@ import re
 import numpy as np
 import vector
 from ui.state import get_run_state
+from engine.systematics import BTAG_WP, SYST_SOURCES, event_syst_factor
 
 
 def preprocess_hep_expr(expr: str) -> str:
@@ -153,7 +154,7 @@ def _make_met(pt, phi) -> _P:
 # ---------------------------------------------------------------------------
 
 _CACHE_KEYS = [
-    "nlep", "nel", "nmu", "njets", "nphot", "weight",
+    "nlep", "nel", "nmu", "njets", "nphot", "nbjets", "weight",
     "l1_pt", "l1_eta", "l1_phi", "l1_e", "l1_d0", "l1_z0", "l1_charge", "l1_flavour",
     "l2_pt", "l2_eta", "l2_phi", "l2_e", "l2_d0", "l2_z0", "l2_charge", "l2_flavour",
     "j1_pt", "j1_eta", "j1_phi", "j1_e", "j1_btag",
@@ -183,13 +184,14 @@ def _grow_acc(acc: dict):
     acc["_cap"] = new_cap
 
 
-def _append_event(acc, nlep, nel, nmu, njets, nphot, l1, l2, j1, j2, ph1, ph2, met, w):
+def _append_event(acc, nlep, nel, nmu, njets, nphot, nbjets,
+                  l1, l2, j1, j2, ph1, ph2, met, w):
     i = acc["_n"]
     if i == acc["_cap"]:
         _grow_acc(acc)
     acc["nlep"][i] = nlep;  acc["nel"][i] = nel
     acc["nmu"][i] = nmu;    acc["njets"][i] = njets
-    acc["nphot"][i] = nphot; acc["weight"][i] = w
+    acc["nphot"][i] = nphot; acc["nbjets"][i] = nbjets; acc["weight"][i] = w
     acc["l1_pt"][i] = l1.pt;       acc["l1_eta"][i] = l1.eta
     acc["l1_phi"][i] = l1.phi;     acc["l1_e"][i] = l1.e
     acc["l1_d0"][i] = l1.d0;       acc["l1_z0"][i] = l1.z0
@@ -301,10 +303,12 @@ def filter_selection_cache(parent_cache_path: str, additional_exprs: list,
                 continue
             nel  = int(data["nel"][i])
             nmu  = int(data["nmu"][i])
+            _nbjets = int(data["nbjets"][i]) if "nbjets" in data else 0
             _append_event(acc,
                           nel + nmu, nel, nmu,
                           int(data["njets"][i]),
                           int(data["nphot"][i]) if "nphot" in data else 0,
+                          _nbjets,
                           l1, l2, j1, j2, ph1, ph2, met, float(data["weight"][i]))
         except Exception:
             continue
@@ -329,13 +333,25 @@ def _obj_from_cache(data, i, prefix, keys, extra=None) -> _P:
     return _P(**kw)
 
 
-def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str):
-    """Load a selection-level cache and fill the histogram with a fresh observable eval."""
+def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str,
+                              with_syst: bool = True):
+    """Load a selection-level cache and fill the histogram with a fresh observable eval.
+
+    When with_syst is True (all non-data samples), also fills per-source UP variation
+    histograms keyed as h_{src}_up (src in SYST_SOURCES) using per-event weight factors.
+    """
+    # Local import: keeps module import-time deps minimal (boost_histogram is only
+    # needed here, not for the proxy/eval/cache-I/O paths exercised by unit tests).
+    import boost_histogram as bh
+
     # OPT-1: mmap_mode='r' lets the OS page in only accessed columns; unaccessed arrays
     # are never faulted into RAM (particularly useful in the vectorized path below).
     data = np.load(cache_file, mmap_mode='r')
     n = len(data["weight"])
     weights = data["weight"].astype(np.float64)
+
+    # Backward-compat: nbjets may be absent in caches built before this column was added.
+    nbjets_arr = data["nbjets"] if "nbjets" in data else np.zeros(n, dtype=np.float32)
 
     # ── Vectorized fast path: evaluate observable over all events at once ──
     try:
@@ -354,6 +370,19 @@ def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str):
         if vals.shape[0] == n:
             mask = np.isfinite(vals) & (vals > -900.0)
             outHist.h["h"].fill(vals[mask], weight=weights[mask])
+            # ── Systematic variation histograms (vectorized) ──────────────
+            if with_syst:
+                nom_axis = outHist.h["h"].axes[0]
+                njets_m = data["njets"][mask].astype(np.float64)
+                nel_m = data["nel"][mask].astype(np.float64)
+                nmu_m = data["nmu"][mask].astype(np.float64)
+                nbjets_m = nbjets_arr[mask].astype(np.float64)
+                w_m = weights[mask]
+                v_m = vals[mask]
+                for src in SYST_SOURCES:
+                    outHist.h[f"h_{src}_up"] = bh.Histogram(nom_axis)
+                    factor = event_syst_factor(src, njets_m, nel_m, nmu_m, nbjets_m)
+                    outHist.h[f"h_{src}_up"].fill(v_m, weight=w_m * factor)
             return
     except Exception:
         pass
@@ -364,6 +393,12 @@ def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str):
         observable_code = compile(observable_target, '<obs>', 'eval')
     except Exception:
         observable_code = None
+
+    # Create variation histograms before the loop when with_syst is requested.
+    if with_syst:
+        nom_axis = outHist.h["h"].axes[0]
+        for src in SYST_SOURCES:
+            outHist.h[f"h_{src}_up"] = bh.Histogram(nom_axis)
 
     _step = max(1, n // 100)
     for i in range(n):
@@ -394,7 +429,17 @@ def fill_histogram_from_cache(cache_file: str, outHist, observable_target: str):
             obs_val = float(obs_val)
             if obs_val <= -900:
                 continue
-            outHist.h["h"].fill(obs_val, weight=float(data["weight"][i]))
+            ev_w = float(data["weight"][i])
+            outHist.h["h"].fill(obs_val, weight=ev_w)
+            if with_syst:
+                ev_njets = int(data["njets"][i])
+                ev_nel = int(data["nel"][i])
+                ev_nmu = int(data["nmu"][i])
+                ev_nbjets = int(nbjets_arr[i])
+                for src in SYST_SOURCES:
+                    factor = float(event_syst_factor(src, ev_njets, ev_nel,
+                                                     ev_nmu, ev_nbjets))
+                    outHist.h[f"h_{src}_up"].fill(obs_val, weight=ev_w * factor)
         except Exception:
             continue
 
@@ -462,6 +507,10 @@ def filter_raw_event_data(arrays, nev, cfg, outHist, observable_target,
             nlep  = nel + nmu
             njets = len(jet_pt[i]) if has_jt else 0
             nphot = len(ph_pt[i])  if has_ph else 0
+            if has_jt and jet_btag is not None:
+                nbjets = int(np.count_nonzero(np.asarray(jet_btag[i]) > BTAG_WP))
+            else:
+                nbjets = 0
 
             # ── Multiplicity cuts ────────────────────────────────────────
             skip = False
@@ -572,7 +621,8 @@ def filter_raw_event_data(arrays, nev, cfg, outHist, observable_target,
 
             # ── Event passes all cuts — accumulate for cache ─────────────
             if cache_acc is not None:
-                _append_event(cache_acc, nlep, nel, nmu, njets, nphot, l1, l2, j1, j2, ph1, ph2, met, w)
+                _append_event(cache_acc, nlep, nel, nmu, njets, nphot, nbjets,
+                              l1, l2, j1, j2, ph1, ph2, met, w)
 
             # ── Observable evaluation ────────────────────────────────────
             if outHist is not None and observable_target:
