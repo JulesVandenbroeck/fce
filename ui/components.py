@@ -206,6 +206,22 @@ def _load_png_to_texture(png_path: str, texture_tag: str) -> bool:
         return False
 
 
+def _load_cutflow_to_texture() -> bool:
+    """Load cutflow.png into the cutflow_texture_buffer. Returns True on success."""
+    png_path = os.path.join(FCE_DIR, "cutflow.png")
+    if not os.path.exists(png_path):
+        return False
+    try:
+        img = Image.open(png_path).convert("RGBA")
+        img_resized = img.resize((1272, 680), Image.Resampling.LANCZOS)
+        pixel_array = np.array(img_resized, dtype=np.float32) / 255.0
+        if dpg.does_item_exist("cutflow_texture_buffer"):
+            dpg.set_value("cutflow_texture_buffer", pixel_array.ravel().tolist())
+        return True
+    except Exception:
+        return False
+
+
 def _add_fit_label(plot_idx: int, fit_results: dict, parent: str,
                    multi_hist: bool = False) -> None:
     """Insert a fit-result text block above a plot image."""
@@ -340,10 +356,9 @@ def _frame_poll_callback(sender=None, app_data=None, user_data=None):
                               hist_labels=labels, fit_results=fit_results)
             log_to_message_center("Completed.")
 
-            cutflow = safe_get_state("cutflow")
-            if cutflow:
-                log_to_message_center(cutflow)
-                safe_set_state("cutflow", "")
+            if safe_get_state("cutflow_ready"):
+                _load_cutflow_to_texture()
+                safe_set_state("cutflow_ready", False)
 
             # Discovery popup for new 5-sigma results (skip already-discovered)
             to_discover = [
@@ -468,10 +483,10 @@ def trigger_analysis_pipeline():
             return
 
     # Reset fit results and cut-flow from previous run
-    safe_set_state("fit_mu",      None)
-    safe_set_state("fit_sig",     None)
-    safe_set_state("fit_results", {})
-    safe_set_state("cutflow",     "")
+    safe_set_state("fit_mu",        None)
+    safe_set_state("fit_sig",       None)
+    safe_set_state("fit_results",   {})
+    safe_set_state("cutflow_ready", False)
 
     safe_set_state("progress",       0.0)
     safe_set_state("running",        True)

@@ -64,6 +64,11 @@ with dpg.texture_registry():
             default_value=empty_buffer,
             tag=f"plot_texture_buffer_{_ti}",
         )
+    dpg.add_dynamic_texture(
+        width=1272, height=680,
+        default_value=[0.1, 0.1, 0.1, 1.0] * (1272 * 680),
+        tag="cutflow_texture_buffer",
+    )
 
     # Logo for About window
     _logo_loaded = False
@@ -608,6 +613,14 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     tag="canvas_view_frame_0",
                     width=636,
                     height=454,
+                )
+            with dpg.collapsing_header(label="Cut-flow", default_open=True,
+                                        tag="cutflow_header"):
+                dpg.add_image(
+                    "cutflow_texture_buffer",
+                    tag="cutflow_view_frame",
+                    width=636,
+                    height=340,
                 )
             with dpg.collapsing_header(label="Console", default_open=True,
                                         tag="console_header"):
