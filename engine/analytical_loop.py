@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from ui.state import (get_run_state, update_run_state,
                       add_active_node, add_completed_node, mark_nodes_completed)
 from engine.path_filter import (filter_raw_event_data, fill_histogram_from_cache,
-                                  make_cache_acc, save_cache, preprocess_hep_expr)
+                                make_cache_acc, save_cache, preprocess_hep_expr)
 from engine.path_final import write_final_histograms
 
 from paths import get_fce_home
@@ -183,9 +183,9 @@ def _process_sample(sel_cfg, s, idx, active_samples, cfg,
             update_run_state("running", False)
             return False
 
-        plot_idx   = hcfg.get("plot_idx", 0)
+        plot_idx = hcfg.get("plot_idx", 0)
         hist_cache = os.path.join(hdir, "output", f"h5_{hcfg['h5']}_{s}.root")
-        out_path   = os.path.join(hdir, "output", f"hist{plot_idx}_{s}.root")
+        out_path = os.path.join(hdir, "output", f"hist{plot_idx}_{s}.root")
 
         if os.path.exists(hist_cache):
             shutil.copy(hist_cache, out_path)
@@ -194,7 +194,8 @@ def _process_sample(sel_cfg, s, idx, active_samples, cfg,
             continue
 
         outHist = hist()
-        outHist.create(int(hcfg["bins"]), float(hcfg["min"]), float(hcfg["max"]))
+        outHist.create(int(hcfg["bins"]), float(
+            hcfg["min"]), float(hcfg["max"]))
         fill_histogram_from_cache(sel_cache, outHist, hcfg["observable"])
         write_final_histograms(hdir, s, hcfg["h5"], outHist, out_path)
 
@@ -229,7 +230,8 @@ def run_physics_loop(cfg, samples, active_samples, en):
     event_counts = _load_event_counts()
     ec_prefix = f"{cfg['detector']}_{cfg['energy'].replace(' ', '')}_"
 
-    header_cache: dict[str, int] = {}   # s -> num_entries, avoids re-opening per selection
+    # s -> num_entries, avoids re-opening per selection
+    header_cache: dict[str, int] = {}
     for s in active_samples:
         cnt = event_counts.get(ec_prefix + s, 0)
         if cnt == 0:
@@ -274,7 +276,7 @@ def run_physics_loop(cfg, samples, active_samples, en):
     processed_any = False
 
     for sel_cfg in selections:
-        sel_nid  = sel_cfg.get("nid")
+        sel_nid = sel_cfg.get("nid")
         sel_name = sel_cfg.get("node_name", "")
 
         # OPT-2: compile selection expressions once per selection branch,
@@ -286,7 +288,8 @@ def run_physics_loop(cfg, samples, active_samples, en):
 
         h5_sel = sel_cfg["h5_sel"]
         all_cached = all(
-            os.path.exists(os.path.join(hdir, "cache", f"sel_{h5_sel}_{s}.npz"))
+            os.path.exists(os.path.join(
+                hdir, "cache", f"sel_{h5_sel}_{s}.npz"))
             for s in active_samples
         )
 
@@ -336,4 +339,14 @@ def run_physics_loop(cfg, samples, active_samples, en):
             mark_nodes_completed(nids_to_complete)
 
     update_run_state("progress", 0.80)
+
+    # ── Cut-flow chart ────────────────────────────────────────────────────────
+    try:
+        from engine.cutflow_plotter import generate_cutflow_plot
+        png_path = generate_cutflow_plot(
+            cfg, active_samples, header_cache, selections)
+        update_run_state("cutflow_ready", bool(png_path))
+    except Exception:
+        update_run_state("cutflow_ready", False)
+
     return processed_any
