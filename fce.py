@@ -65,8 +65,8 @@ with dpg.texture_registry():
             tag=f"plot_texture_buffer_{_ti}",
         )
     dpg.add_dynamic_texture(
-        width=1272, height=680,
-        default_value=[0.1, 0.1, 0.1, 1.0] * (1272 * 680),
+        width=1272, height=1100,
+        default_value=[0.1, 0.1, 0.1, 1.0] * (1272 * 1100),
         tag="cutflow_texture_buffer",
     )
 
@@ -620,7 +620,7 @@ with dpg.window(tag="primary_studio_window", label="Future Collider Experiment")
                     "cutflow_texture_buffer",
                     tag="cutflow_view_frame",
                     width=636,
-                    height=340,
+                    height=550,
                 )
             with dpg.collapsing_header(label="Console", default_open=True,
                                         tag="console_header"):

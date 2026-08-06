@@ -213,7 +213,7 @@ def _load_cutflow_to_texture() -> bool:
         return False
     try:
         img = Image.open(png_path).convert("RGBA")
-        img_resized = img.resize((1272, 680), Image.Resampling.LANCZOS)
+        img_resized = img.resize((1272, 1100), Image.Resampling.LANCZOS)
         pixel_array = np.array(img_resized, dtype=np.float32) / 255.0
         if dpg.does_item_exist("cutflow_texture_buffer"):
             dpg.set_value("cutflow_texture_buffer", pixel_array.ravel().tolist())

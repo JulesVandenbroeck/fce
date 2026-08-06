@@ -10,10 +10,24 @@ plt.style.use(hep.style.ROOT)
 
 
 def generate_cutflow_plot(cfg, active_samples, header_cache, selections):
-    """Normalized stacked bar cut-flow chart saved as PDF. Returns path or ''."""
+    """Normalized stacked bar cut-flow chart saved as PNG. Returns path or ''."""
+    import json
     hdir = get_fce_home()
     try:
-        mc_samples = [s for s in active_samples if s != "data"]
+        # Load samples.json to get the canonical sample order (matches plotter.py)
+        _config_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "config", "samples.json"
+        )
+        with open(_config_path) as _f:
+            _samples_json = json.load(_f)
+        en = cfg.get("energy", "").replace(" GeV", "")
+        _sample_order = list(_samples_json.get(en, {}).keys())
+
+        mc_all = [s for s in active_samples if s != "data"]
+        # Sort mc_samples to match the canonical order from samples.json
+        mc_samples = [s for s in _sample_order if s in mc_all]
+        mc_samples += [s for s in mc_all if s not in mc_samples]
+
         if not mc_samples:
             return ""
 
@@ -35,7 +49,7 @@ def generate_cutflow_plot(cfg, active_samples, header_cache, selections):
                         per_sample[s] = 0
                 else:
                     per_sample[s] = 0
-            stages.append((f"After {sel_name}", per_sample))
+            stages.append((sel_name, per_sample))
 
         n_stages = len(stages)
         n_mc = len(mc_samples)
@@ -95,7 +109,8 @@ def generate_cutflow_plot(cfg, active_samples, header_cache, selections):
         ax.set_ylabel("MC Composition (%)", fontsize=14)
         ax.set_ylim(0, 115)
         ax.tick_params(axis="y", labelsize=11)
-        ax.legend(loc="upper right", frameon=True, fontsize=11)
+        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0,
+                  frameon=False, fontsize=11)
 
         detector = cfg.get("detector", "")
         energy = cfg.get("energy", "")
